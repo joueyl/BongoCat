@@ -29,6 +29,7 @@ pub(crate) enum PendingOperation {
     OverlayOpacity,
     OverlayCornerRadius,
     OverlayHoverHideDelay,
+    OverlayIdleHideDelay,
     MotionAudio,
     CommandShortcuts,
     BehaviorShortcuts,
@@ -36,8 +37,10 @@ pub(crate) enum PendingOperation {
     MaximumFps,
     ModelSettings,
     GamepadAxisSettings,
+    CursorSettings,
     GamepadAutoSwitch,
     RememberLastExpression,
+    ToggleRepeatedExpression,
     StartupItem,
     ModelSelection,
     ModelDeletion,
@@ -121,6 +124,11 @@ pub(crate) enum SettingValue {
         hide_on_pointer_hover_delay_seconds: u32,
         settings: SettingsOverlay,
     },
+    OverlayIdleHideDelay {
+        expected_config_revision: u64,
+        hide_on_idle_delay_seconds: u32,
+        settings: SettingsOverlay,
+    },
     MotionAudioEnabled {
         expected_config_revision: u64,
         enabled: bool,
@@ -149,11 +157,19 @@ pub(crate) enum SettingValue {
         expected_config_revision: u64,
         settings: SettingsGamepadAxisSettings,
     },
+    CursorSettings {
+        expected_config_revision: u64,
+        settings: SettingsCursorSettings,
+    },
     GamepadAutoSwitch {
         expected_config_revision: u64,
         settings: SettingsGamepadAutoSwitch,
     },
     RememberLastExpression {
+        expected_config_revision: u64,
+        enabled: bool,
+    },
+    ToggleRepeatedExpression {
         expected_config_revision: u64,
         enabled: bool,
     },

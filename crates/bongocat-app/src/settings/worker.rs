@@ -149,6 +149,16 @@ pub(super) fn run_service(
                     interval_hours: application_config.check_interval_hours,
                 }));
             }
+            SettingsCommand::ReadPressedModifiers { reply } => {
+                // An atomic read of state the runtime already publishes on every
+                // input edge. No configuration is touched and no revision moves,
+                // so this is safe to call as often as the recorder needs.
+                let _ = reply.respond(Ok(application
+                    .runtime_client()
+                    .snapshot()
+                    .input
+                    .pressed_modifiers));
+            }
             SettingsCommand::SetOverlayVisible {
                 expected_config_revision,
                 visible,
@@ -317,6 +327,7 @@ pub(super) fn run_service(
             } => {
                 let runtime_settings = OverlaySettings {
                     click_through: settings.click_through,
+                    hold_modifier_to_interact: settings.hold_modifier_to_interact,
                     always_on_top: settings.always_on_top,
                     scale_percent: settings.scale_percent,
                     opacity_percent: settings.opacity_percent,
@@ -324,6 +335,8 @@ pub(super) fn run_service(
                     hide_on_pointer_hover: settings.hide_on_pointer_hover,
                     hide_on_pointer_hover_delay_seconds: settings
                         .hide_on_pointer_hover_delay_seconds,
+                    hide_on_idle: settings.hide_on_idle,
+                    hide_on_idle_delay_seconds: settings.hide_on_idle_delay_seconds,
                     keep_inside_screen: settings.keep_inside_screen,
                 };
                 let result = check_revision(&application, expected_config_revision)
@@ -426,6 +439,16 @@ pub(super) fn run_service(
                     mirror_pointer_tracking_vertical: settings.mirror_pointer_tracking_vertical,
                     ignore_keyboard: settings.ignore_keyboard,
                     ignore_gamepad: settings.ignore_gamepad,
+                    show_all_pressed_keys: settings.show_all_pressed_keys,
+                    // Not part of the page's grouped settings and therefore not
+                    // part of the command: it has its own switch and its own
+                    // revision-checked command, so this projection carries the
+                    // stored value across rather than resetting it whenever an
+                    // unrelated model setting moves.
+                    toggle_repeated_expression: application
+                        .config()
+                        .model
+                        .toggle_repeated_expression,
                     ignore_pointer: settings.ignore_pointer,
                 };
                 let result = check_revision(&application, expected_config_revision)
@@ -452,6 +475,24 @@ pub(super) fn run_service(
                         .expect("bounded gamepad percentages are below 100");
                         application
                             .set_gamepad_axis_settings(runtime_settings)
+                            .map(|_| ())
+                            .map_err(map_application_error)
+                    })
+                    .map(|_| snapshot(&application, &mut clock, false, startup_item.state()));
+                let _ = reply.respond(result);
+            }
+            SettingsCommand::SetCursorSettings {
+                expected_config_revision,
+                settings,
+                reply,
+            } => {
+                let runtime_settings = CursorSettings {
+                    force_move: settings.force_move,
+                };
+                let result = check_revision(&application, expected_config_revision)
+                    .and_then(|()| {
+                        application
+                            .set_cursor_settings(runtime_settings)
                             .map(|_| ())
                             .map_err(map_application_error)
                     })
@@ -521,6 +562,29 @@ pub(super) fn run_service(
                         ApplicationLogEvent::new(ApplicationLogCode::SettingsCommandFailed)
                             .with_context(ApplicationLogContext::Operation(
                                 "remember_last_expression",
+                            ))
+                            .with_context(ApplicationLogContext::Reason(error.code().as_str())),
+                    );
+                }
+                let _ = reply.respond(result);
+            }
+            SettingsCommand::SetToggleRepeatedExpression {
+                expected_config_revision,
+                enabled,
+                reply,
+            } => {
+                let result = check_revision(&application, expected_config_revision)
+                    .and_then(|()| {
+                        application
+                            .set_toggle_repeated_expression(enabled)
+                            .map_err(map_application_error)
+                    })
+                    .map(|_| snapshot(&application, &mut clock, false, startup_item.state()));
+                if let Err(error) = &result {
+                    application.record_log_once(
+                        ApplicationLogEvent::new(ApplicationLogCode::SettingsCommandFailed)
+                            .with_context(ApplicationLogContext::Operation(
+                                "toggle_repeated_expression",
                             ))
                             .with_context(ApplicationLogContext::Reason(error.code().as_str())),
                     );

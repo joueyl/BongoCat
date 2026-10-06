@@ -78,6 +78,7 @@ impl SettingsView {
             "settings.models.behavior.mirror_model.label",
             "settings.models.behavior.motion_audio.label",
             "settings.models.behavior.remember_last_expression.label",
+            "settings.models.behavior.toggle_repeated_expression.label",
             "settings.models.behavior.random_behavior_mode.label",
             "settings.models.behavior.random_behavior_mode.options.off",
             "settings.models.behavior.random_behavior_mode.options.expressions",
@@ -88,8 +89,10 @@ impl SettingsView {
             "settings.input_interaction.mouse.ignore_mouse_input.label",
             "settings.input_interaction.mouse.mirror_mouse_tracking_horizontal.label",
             "settings.input_interaction.mouse.mirror_mouse_tracking_vertical.label",
+            "settings.input_interaction.mouse.force_move.label",
             "settings.input_interaction.keyboard.title",
             "settings.input_interaction.keyboard.ignore_keyboard_input.label",
+            "settings.input_interaction.keyboard.show_all_pressed_keys.label",
             "settings.input_interaction.gamepad.title",
             "settings.input_interaction.gamepad.auto_switch.label",
             "settings.input_interaction.gamepad.connected_model.label",
@@ -346,6 +349,7 @@ impl SettingsView {
     /// Complete the UI-side work that must happen before the settings window is destroyed.
     pub fn prepare_close(&mut self, cx: &mut Context<Self>) {
         self.cancel_shortcut_capture(cx);
+        self.cancel_hold_modifier_recording(cx);
         self.clear_model_drag(cx);
         self.flush_pending_settings(cx);
         self.window_hidden = true;

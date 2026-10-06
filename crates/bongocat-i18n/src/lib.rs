@@ -18,14 +18,62 @@ pub const CATALOG_REVISION: &str = env!("BONGOCAT_I18N_CATALOG_REVISION");
 /// The locale used for the application fallback and the initial UI.
 pub const DEFAULT_LOCALE: &str = "en-US";
 
-/// Resolve the persisted application language into a locale understood by the
-/// translation backend. `system` is resolved by the platform/config layer.
+/// Every catalog this crate ships, in the order the language selector shows.
+///
+/// The names are region-qualified the way a single-catalog-per-language release
+/// is conventionally named: the subtag nominates the primary variety the copy
+/// was written in, and it does not claim a regional specialisation the catalog
+/// does not carry. `en-US` is the same kind of name — it serves `en-GB` just as
+/// `ar-SA` serves `ar-EG`.
+pub const SHIPPED_LOCALES: [&str; 7] = [
+    "en-US", "zh-CN", "zh-TW", "ar-SA", "vi-VN", "pt-BR", "ko-KR",
+];
+
+/// Resolve any locale tag onto the catalog that serves it.
+///
+/// This is the RFC 4647 language-subtag fallback every other runtime already
+/// does — browsers' `Intl`, CLDR, and the operating system itself all truncate
+/// right-to-left until a known tag is hit, so `ar-EG` falls back to `ar` rather
+/// than to English. Matching the primary subtag against the shipped catalogs is
+/// that same rule, and it is what keeps a machine reporting `vi` or `vi-VN` or
+/// `ar` or `ar-EG` or `pt` or `pt-PT` or `ko` on one catalog instead of seven.
+///
+/// `zh` is the one case that cannot be decided by the primary subtag alone.
+/// Simplified and Traditional are different written forms rather than regional
+/// variants, and both ship their own catalog. Every `zh` tag therefore resolves
+/// from inside the `zh` branch by script subtag, which is the one thing the
+/// region subtag cannot express on its own. Letting it fall through to the
+/// subtag loop would hand Simplified-tagged machines Traditional copy, or the
+/// other way round.
 pub fn locale_code(code: &str) -> &str {
-    match code {
-        "zh-CN" => "zh-CN",
-        "en-US" | "system" => DEFAULT_LOCALE,
-        _ => DEFAULT_LOCALE,
+    let normalized = code.replace('_', "-").to_ascii_lowercase();
+    let language = normalized.split('-').next().unwrap_or("");
+    if language == "zh" {
+        return if is_simplified_chinese(&normalized) {
+            "zh-CN"
+        } else {
+            "zh-TW"
+        };
     }
+    SHIPPED_LOCALES
+        .iter()
+        .copied()
+        .find(|shipped| {
+            shipped
+                .split_once('-')
+                .is_some_and(|(shipped_language, _)| shipped_language == language)
+        })
+        .unwrap_or(DEFAULT_LOCALE)
+}
+
+/// Whether a `zh` tag names the Simplified script rather than the Traditional one.
+///
+/// The script subtag (`hant`/`hans`) is authoritative when it is present; the
+/// `TW`/`HK`/`MO` region subtags are the spellings platforms use when it is not.
+fn is_simplified_chinese(normalized: &str) -> bool {
+    !normalized
+        .split('-')
+        .any(|subtag| matches!(subtag, "hant" | "tw" | "hk" | "mo"))
 }
 
 /// Translate a stable key for the requested locale.

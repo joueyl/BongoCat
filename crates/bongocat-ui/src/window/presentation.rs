@@ -185,6 +185,32 @@ pub(super) fn gamepad_auto_switch_options(
     options
 }
 
+/// The options one gamepad auto switch dropdown offers in the frame being
+/// rendered.
+///
+/// `sync_component_inputs` fills the dropdown's items with this same list, and
+/// the render path reads it back to size the dropdown's menu, so the menu width
+/// and the rows it has to hold cannot disagree about what the options are. A
+/// frame with no snapshot yet offers the "last used" choice alone, which is what
+/// `SettingsView::new` seeds the dropdowns with. When the snapshot is there it is
+/// the catalog that decides the rows, and the configured target only adds the row
+/// for a model the catalog no longer offers.
+pub(super) fn gamepad_auto_switch_choices(
+    snapshot: Option<&SettingsSnapshot>,
+    state: GamepadConnectionState,
+    language: SettingsLanguage,
+) -> Vec<GamepadModelChoice> {
+    match snapshot {
+        Some(snapshot) => gamepad_auto_switch_options(
+            &snapshot.model_catalog.entries,
+            state,
+            state.target(&snapshot.gamepad_auto_switch).as_ref(),
+            language,
+        ),
+        None => gamepad_auto_switch_options(&[], state, None, language),
+    }
+}
+
 /// The text one model row shows: the editable title when the catalog still knows
 /// the model, and the stable id when it does not — the same fallback the model
 /// library page uses for a model that was never renamed.
@@ -318,6 +344,60 @@ fn macos_shortcut_token(token: &str) -> &str {
         "period" => ".",
         "slash" => "/",
         _ => token.trim(),
+    }
+}
+
+/// The chord-token name of a modifier family, without its side.
+///
+/// These are the four words [`ShortcutChord::canonical`] emits, which is what
+/// makes the modifier row read like the shortcut page next to it rather than
+/// inventing a second vocabulary for the same four keys.
+fn modifier_key_token(modifier: ModifierKey) -> &'static str {
+    match modifier {
+        ModifierKey::LeftControl | ModifierKey::RightControl => "Control",
+        ModifierKey::LeftShift | ModifierKey::RightShift => "Shift",
+        ModifierKey::LeftAlt | ModifierKey::RightAlt => "Alt",
+        ModifierKey::LeftMeta | ModifierKey::RightMeta => "Meta",
+    }
+}
+
+/// Format a recorded modifier for the platform's familiar keyboard labels.
+///
+/// The side is part of the value rather than a detail: this row records one
+/// physical key, and a label that could not tell the left shift from the right
+/// one would describe a setting the user cannot see. macOS gets its symbol from
+/// the same table the shortcut display uses, so this row and a recorded
+/// `Control+Shift+A` cannot disagree about what a shift looks like.
+///
+/// The side **leads**, and it is a word in the interface language. `⇧L` reads as
+/// a variant of the symbol rather than as a label for it; `左⇧` reads the way the
+/// key is spoken. The modifier symbol stays untranslated — `⇧` means shift in
+/// every language — so the side word is the one part of this label that follows
+/// the interface, exactly like the row's own title.
+pub(super) fn modifier_key_display(modifier: ModifierKey, language: SettingsLanguage) -> String {
+    format_modifier_key_display(modifier, cfg!(target_os = "macos"), language)
+}
+
+/// Testable spelling of [`modifier_key_display`] for one platform.
+pub(super) fn format_modifier_key_display(
+    modifier: ModifierKey,
+    macos: bool,
+    language: SettingsLanguage,
+) -> String {
+    let token = modifier_key_token(modifier);
+    let side = bongocat_i18n::text(
+        language.catalog_locale(),
+        if modifier.is_right() {
+            "settings.overlay.hold_modifier_to_interact.side_right"
+        } else {
+            "settings.overlay.hold_modifier_to_interact.side_left"
+        },
+    );
+    if macos {
+        // No gap: the two glyphs together are the key, the way a keycap reads.
+        format!("{side}{}", macos_shortcut_token(token))
+    } else {
+        format!("{side} {token}")
     }
 }
 

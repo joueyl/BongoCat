@@ -51,6 +51,7 @@ pub struct SettingsSnapshot {
     pub random_behavior: SettingsRandomBehavior,
     pub model_settings: SettingsModelSettings,
     pub gamepad_axis_settings: SettingsGamepadAxisSettings,
+    pub cursor_settings: SettingsCursorSettings,
     /// The configured gamepad-connection model switch. The settings service is
     /// what acts on it, so the view only reads the gate and the two targets.
     pub gamepad_auto_switch: SettingsGamepadAutoSwitch,
@@ -60,6 +61,14 @@ pub struct SettingsSnapshot {
     /// decision a user makes, and which expression each model happens to be
     /// holding is a fact about what they used rather than a setting.
     pub remember_last_expression: bool,
+    /// Whether triggering the expression already showing turns it off.
+    ///
+    /// A separate switch from the remembered-expression one because the two are
+    /// orthogonal: remembering an expression says where a model starts, and this
+    /// says how a repeat trigger behaves while it is already wearing one. Neither
+    /// expression a model currently shows is shown here, for the same reason the
+    /// remembered ones are not.
+    pub toggle_repeated_expression: bool,
     pub logging: SettingsLogging,
     pub shortcuts: SettingsShortcuts,
     pub startup_item: SettingsStartupItemStatus,
@@ -105,6 +114,9 @@ pub struct SettingsModelSettings {
     pub mirror_pointer_tracking_vertical: bool,
     pub ignore_keyboard: bool,
     pub ignore_gamepad: bool,
+    /// Whether the key-image layer stacks every held key with artwork instead of
+    /// drawing one image per hand.
+    pub show_all_pressed_keys: bool,
     pub ignore_pointer: bool,
 }
 
@@ -162,6 +174,14 @@ pub struct SettingsGamepadAxisSettings {
     pub trigger_dead_zone_percent: u8,
 }
 
+/// How the pointer is read before any model sees it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SettingsCursorSettings {
+    /// Follow relative device motion instead of the absolute cursor position,
+    /// so the model keeps following the pointer in applications that capture it.
+    pub force_move: bool,
+}
+
 /// Choosing the shown model from gamepad connection state.
 ///
 /// `connected_model` is the model the product shows while at least one gamepad
@@ -187,6 +207,12 @@ impl Default for SettingsGamepadAxisSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettingsOverlay {
     pub click_through: bool,
+    /// The physical modifier key whose hold gives the pointer back to the user.
+    ///
+    /// The overlay stops passing pointer events through and stops hiding while
+    /// this key is down, so a cat that is configured to be unreachable can still
+    /// be moved. `None` means no key does this.
+    pub hold_modifier_to_interact: Option<ModifierKey>,
     pub always_on_top: bool,
     pub scale_percent: u16,
     pub opacity_percent: u8,
@@ -199,6 +225,11 @@ pub struct SettingsOverlay {
     /// How long the pointer must rest on the overlay before the hover hide
     /// starts, in whole seconds. `0` hides as soon as the pointer enters.
     pub hide_on_pointer_hover_delay_seconds: u32,
+    /// Hide the overlay after the mouse, keyboard and gamepad stay untouched.
+    pub hide_on_idle: bool,
+    /// How long input may stay untouched before the idle hide starts, in whole
+    /// seconds. `0` hides as soon as input stops.
+    pub hide_on_idle_delay_seconds: u32,
     /// Keep the overlay fully on a display. The window is allowed over a
     /// taskbar, Dock or menu bar, and a window dragged off the desktop returns
     /// after the drag ends rather than being pulled back mid-drag.
@@ -209,12 +240,15 @@ impl Default for SettingsOverlay {
     fn default() -> Self {
         Self {
             click_through: false,
+            hold_modifier_to_interact: None,
             always_on_top: true,
             scale_percent: 100,
             opacity_percent: 100,
             corner_radius_percent: 0,
             hide_on_pointer_hover: false,
             hide_on_pointer_hover_delay_seconds: 0,
+            hide_on_idle: false,
+            hide_on_idle_delay_seconds: 10,
             keep_inside_screen: true,
         }
     }

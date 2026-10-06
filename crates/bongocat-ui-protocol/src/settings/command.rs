@@ -39,6 +39,23 @@ pub enum SettingsCommand {
     ReadAutomaticUpdateSettings {
         reply: SettingsReply<Result<AutomaticUpdateSettings, SettingsError>>,
     },
+    /// Which keyboard modifiers are held right now, with the two sides apart.
+    ///
+    /// This exists because the modifier recorder cannot read the keyboard itself.
+    /// GPUI reports a modifier press as a boolean flag change with no key
+    /// identity, so left and right arrive indistinguishable and a press of a bare
+    /// modifier never reaches a key handler at all. The runtime's pressed set is
+    /// the only place the physical key is known, and it is where the answer
+    /// belongs.
+    ///
+    /// It is a separate command from [`Self::ReadSnapshot`] because the recorder
+    /// needs it several times a second, and building a snapshot walks the model
+    /// store on disk. Reading this is an atomic load of state the runtime already
+    /// publishes on every input edge, which is also what makes it fresh enough
+    /// to record a key the user is holding.
+    ReadPressedModifiers {
+        reply: SettingsReply<Result<PressedModifiers, SettingsError>>,
+    },
     SetOverlayVisible {
         expected_config_revision: u64,
         visible: bool,
@@ -119,6 +136,12 @@ pub enum SettingsCommand {
         settings: SettingsGamepadAxisSettings,
         reply: SettingsReply<Result<SettingsSnapshot, SettingsError>>,
     },
+    /// Persist how the pointer is read before any model sees it.
+    SetCursorSettings {
+        expected_config_revision: u64,
+        settings: SettingsCursorSettings,
+        reply: SettingsReply<Result<SettingsSnapshot, SettingsError>>,
+    },
     /// Persist the gamepad-connection model switch as one atomic change.
     SetGamepadAutoSwitch {
         expected_config_revision: u64,
@@ -131,6 +154,17 @@ pub enum SettingsCommand {
     /// edited, and turning the restore off keeps them so turning it back on
     /// restores what the user had rather than nothing.
     SetRememberLastExpression {
+        expected_config_revision: u64,
+        enabled: bool,
+        reply: SettingsReply<Result<SettingsSnapshot, SettingsError>>,
+    },
+    /// Whether triggering the expression already showing turns it off.
+    ///
+    /// The switch alone, and it reaches the runtime as the same model settings the
+    /// page reads back: the runtime is what knows which expression is in effect,
+    /// so the service persists the choice and pushes the settings rather than
+    /// deciding the toggle itself.
+    SetToggleRepeatedExpression {
         expected_config_revision: u64,
         enabled: bool,
         reply: SettingsReply<Result<SettingsSnapshot, SettingsError>>,

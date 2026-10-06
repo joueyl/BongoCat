@@ -125,12 +125,8 @@ impl SettingsView {
             ),
         ] {
             let configured = state.target(&snapshot.gamepad_auto_switch);
-            let options = gamepad_auto_switch_options(
-                &snapshot.model_catalog.entries,
-                state,
-                configured.as_ref(),
-                snapshot.resolved_language,
-            );
+            let options =
+                gamepad_auto_switch_choices(Some(snapshot), state, snapshot.resolved_language);
             // The list is rebuilt from the catalog, so the committed value has to
             // be looked up in the new list rather than carried over by position.
             let selected = options
@@ -426,6 +422,8 @@ impl SettingsView {
             overlay_corner_radius_timer_generation: 0,
             overlay_hover_hide_delay_debouncer: crate::SettingsPatchDebouncer::default(),
             overlay_hover_hide_delay_timer_generation: 0,
+            overlay_idle_hide_delay_debouncer: crate::SettingsPatchDebouncer::default(),
+            overlay_idle_hide_delay_timer_generation: 0,
             gamepad_dead_zone_debouncer: crate::SettingsPatchDebouncer::default(),
             gamepad_dead_zone_timer_generation: 0,
             maximum_fps_debouncer: crate::SettingsPatchDebouncer::default(),
@@ -446,6 +444,11 @@ impl SettingsView {
             shortcut_row_focus: BTreeMap::new(),
             shortcut_play_focus: BTreeMap::new(),
             shortcut_clear_focus: BTreeMap::new(),
+            hold_modifier_recording: false,
+            hold_modifier_recorder_focus: cx.focus_handle(),
+            hold_modifier_clear_focus: cx.focus_handle(),
+            hold_modifier_blur_subscription: None,
+            hold_modifier_recording_generation: 0,
             window_hidden: true,
             navigation_memory: SettingsNavigationMemory::default(),
             applied_theme: None,

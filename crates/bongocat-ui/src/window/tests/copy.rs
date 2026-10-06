@@ -28,7 +28,7 @@ fn build_information_is_localized_and_contains_only_compiled_identity() {
         environment: crate::SettingsBuildEnvironment::Development,
         cubism_core_version: "6.0.1".to_owned(),
     };
-    let detail = build_info_detail(SettingsLanguage::EnglishUnitedStates, &build_info);
+    let detail = build_info_detail(SettingsLanguage::English, &build_info);
     assert_eq!(
         detail,
         format!("Version {product_version} · Development build")
@@ -280,7 +280,7 @@ fn shortcut_presentations_follow_the_resolved_language() {
             playable: None,
             shortcut: None,
         }
-        .name(SettingsLanguage::EnglishUnitedStates),
+        .name(SettingsLanguage::English),
         "Show or hide the model window"
     );
     for (command, chinese, english) in [
@@ -305,7 +305,7 @@ fn shortcut_presentations_follow_the_resolved_language() {
             chinese
         );
         assert_eq!(
-            shortcut_command_name(SettingsLanguage::EnglishUnitedStates, command),
+            shortcut_command_name(SettingsLanguage::English, command),
             english
         );
     }
@@ -396,7 +396,7 @@ fn shortcut_scope_gates_have_their_own_localized_label() {
 fn model_behavior_shortcut_copy_stays_aligned_between_scope_and_gate() {
     for (language, scope_title, gate_title) in [
         (
-            SettingsLanguage::EnglishUnitedStates,
+            SettingsLanguage::English,
             "Model behavior shortcuts",
             "Enable model behavior shortcuts",
         ),
@@ -411,10 +411,54 @@ fn model_behavior_shortcut_copy_stays_aligned_between_scope_and_gate() {
     }
 }
 
+/// The login item row names one concept, so the switch and every state that
+/// explains why it cannot act have to spell it the same way.
+///
+/// The switch used to be called "登录时启动" while the three unavailable states
+/// said the same words again, and a reader who has only ever seen the Windows
+/// task manager has to work out that this is what "start with Windows" is
+/// called here. Each catalog entry is pinned so the wording cannot drift back
+/// into two vocabularies for the same setting.
+#[test]
+fn the_login_item_row_names_one_concept_in_its_switch_and_its_states() {
+    for (locale, label, platform, operating_system, build) in [
+        (
+            "en-US",
+            "Run at startup",
+            "Running at startup is unavailable on this system",
+            "Running at startup is unavailable on this operating system",
+            "Running at startup is unavailable in development builds",
+        ),
+        (
+            "zh-CN",
+            "开机自启动",
+            "当前系统不支持开机自启动",
+            "当前操作系统不支持开机自启动",
+            "开发版本不支持开机自启动",
+        ),
+    ] {
+        assert_eq!(
+            bongocat_i18n::text(locale, "settings.app_system.open_at_login.label"),
+            label
+        );
+        for (key, expected) in [
+            ("unsupported_platform", platform),
+            ("unsupported_os", operating_system),
+            ("unsupported_build", build),
+        ] {
+            assert_eq!(
+                bongocat_i18n::text(locale, &format!("settings.app_system.startup.{key}")),
+                expected,
+                "{locale}: {key} names the setting differently from its switch"
+            );
+        }
+    }
+}
+
 #[test]
 fn model_window_visibility_copy_uses_the_shared_hide_label() {
     for (language, label) in [
-        (SettingsLanguage::EnglishUnitedStates, "Hide model window"),
+        (SettingsLanguage::English, "Hide model window"),
         (SettingsLanguage::ChineseSimplified, "隐藏模型窗口"),
     ] {
         assert_eq!(
@@ -431,7 +475,7 @@ fn model_window_visibility_copy_uses_the_shared_hide_label() {
 fn hover_hide_copy_uses_the_same_mouse_hover_subject() {
     for (language, switch_label, delay_label) in [
         (
-            SettingsLanguage::EnglishUnitedStates,
+            SettingsLanguage::English,
             "Hide on mouse hover",
             "Mouse hover hide delay (seconds)",
         ),
@@ -448,6 +492,29 @@ fn hover_hide_copy_uses_the_same_mouse_hover_subject() {
         );
         assert_eq!(
             bongocat_i18n::text(locale, "settings.overlay.hide_on_mouse_hover_delay.label"),
+            delay_label
+        );
+    }
+}
+
+/// The idle hide copy names the inactivity rather than a device.
+///
+/// Both rows control the same presentation, but they read from different
+/// conditions: the hover hide reacts to the pointer, the idle hide to the
+/// absence of any input. Calling it a mouse or keyboard hide would make the
+/// delay row look like it belongs to the row above it.
+#[test]
+fn idle_hide_copy_names_the_inactivity_instead_of_a_device() {
+    for (locale, switch_label, delay_label) in [
+        ("en-US", "Hide when idle", "Idle hide delay (seconds)"),
+        ("zh-CN", "无操作时隐藏", "无操作时隐藏延迟（秒）"),
+    ] {
+        assert_eq!(
+            bongocat_i18n::text(locale, "settings.overlay.hide_on_idle.label"),
+            switch_label
+        );
+        assert_eq!(
+            bongocat_i18n::text(locale, "settings.overlay.hide_on_idle_delay.label"),
             delay_label
         );
     }
@@ -496,7 +563,7 @@ fn invalid_model_status_is_stable_and_path_free() {
             diagnostic: SettingsModelDiagnostic::ModelReferenceSymlinkEscape,
         },
     );
-    let status = model_availability_status(&entry, SettingsLanguage::EnglishUnitedStates);
+    let status = model_availability_status(&entry, SettingsLanguage::English);
     assert_eq!(
         status.as_ref().map(|status| status.as_ref()),
         Some("Imported · Package layout is invalid")

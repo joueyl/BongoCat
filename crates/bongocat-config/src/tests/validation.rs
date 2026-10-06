@@ -18,42 +18,158 @@ fn old_imported_model_metadata_without_library_url_still_parses() {
     assert!(parsed.model.imported_models[0].library_url.is_some());
 }
 use crate::{
-    MAXIMUM_MODEL_EXPRESSION_MEMORIES, MODEL_EXPRESSION_MEMORY_MAXIMUM_NAME_BYTES,
-    ModelExpressionMemory,
+    DEFAULT_HIDE_ON_IDLE_DELAY_SECONDS, MAXIMUM_MODEL_EXPRESSION_MEMORIES,
+    MODEL_EXPRESSION_MEMORY_MAXIMUM_NAME_BYTES, ModelExpressionMemory,
 };
+use bongocat_input::ModifierKey;
 
 #[test]
-fn system_locale_resolves_to_simplified_chinese_or_english() {
+fn system_locale_resolves_to_a_shipped_language() {
     assert_eq!(
         Language::from_system_locale("zh-Hans-CN"),
         Language::ChineseSimplified
     );
     assert_eq!(
         Language::from_system_locale("zh_Hant_HK"),
-        Language::EnglishUnitedStates
+        Language::ChineseTraditional
     );
-    assert_eq!(
-        Language::from_system_locale("en-GB"),
-        Language::EnglishUnitedStates
-    );
-    assert_eq!(
-        Language::from_system_locale("de-DE"),
-        Language::EnglishUnitedStates
-    );
+    assert_eq!(Language::from_system_locale("en-GB"), Language::English);
+    assert_eq!(Language::from_system_locale("de-DE"), Language::English);
+    // One catalog serves every Arabic region, so the region subtag is
+    // deliberately not part of the match: a machine in Saudi Arabia and one in
+    // Egypt both report a locale the product reads from the same `ar-SA`
+    // catalog. This is the RFC 4647 language-subtag fallback.
+    for locale in ["ar", "ar-EG", "ar-SA", "ar_MA"] {
+        assert_eq!(
+            Language::from_system_locale(locale),
+            Language::Arabic,
+            "{locale} is an Arabic locale"
+        );
+    }
+    // Vietnamese takes the same shape: `vi` and `vi-VN` both reach the one
+    // shipped catalog, as do the English variants that are not `en-US`.
+    for locale in ["vi", "vi-VN", "vi_VN"] {
+        assert_eq!(
+            Language::from_system_locale(locale),
+            Language::Vietnamese,
+            "{locale} is a Vietnamese locale"
+        );
+    }
+    for locale in ["en", "en-GB", "en_AU", "en-CA"] {
+        assert_eq!(
+            Language::from_system_locale(locale),
+            Language::English,
+            "{locale} is an English locale"
+        );
+    }
+    // Portuguese takes the same shape: the copy was written for Brazil, and a
+    // machine reporting plain `pt` or European `pt-PT` reaches it on the primary
+    // subtag rather than falling back to English.
+    for locale in ["pt", "pt-BR", "pt_BR", "pt-PT"] {
+        assert_eq!(
+            Language::from_system_locale(locale),
+            Language::Portuguese,
+            "{locale} is a Portuguese locale"
+        );
+    }
+    // Korean takes the same shape: the copy was written for South Korea, and a
+    // machine reporting plain `ko` reaches it on the primary subtag rather than
+    // falling back to English.
+    for locale in ["ko", "ko-KR", "ko_KR", "ko-KP"] {
+        assert_eq!(
+            Language::from_system_locale(locale),
+            Language::Korean,
+            "{locale} is a Korean locale"
+        );
+    }
+    // Chinese shares the `zh` subtag across two scripts, so it is the one
+    // language the primary subtag cannot classify. The script subtag decides
+    // when the platform reports one, and the `TW`/`HK`/`MO` region subtags
+    // decide when it does not; both spellings reach the `zh-TW` catalog rather
+    // than reading `zh-CN` or dropping to English.
+    for locale in ["zh-TW", "zh-HK", "zh-MO", "zh-Hant", "zh-Hant-HK"] {
+        assert_eq!(
+            Language::from_system_locale(locale),
+            Language::ChineseTraditional,
+            "{locale} is Traditional Chinese"
+        );
+    }
+    for locale in ["zh", "zh-CN", "zh-Hans", "zh-Hans-CN", "zh_SG"] {
+        assert_eq!(
+            Language::from_system_locale(locale),
+            Language::ChineseSimplified,
+            "{locale} is Simplified Chinese"
+        );
+    }
     assert_eq!(
         Language::System.resolve(Language::ChineseSimplified),
         Language::ChineseSimplified
     );
     assert_eq!(
+        Language::System.resolve(Language::ChineseTraditional),
+        Language::ChineseTraditional
+    );
+    assert_eq!(Language::System.resolve(Language::Arabic), Language::Arabic);
+    assert_eq!(
+        Language::System.resolve(Language::Vietnamese),
+        Language::Vietnamese
+    );
+    assert_eq!(
+        Language::System.resolve(Language::Portuguese),
+        Language::Portuguese
+    );
+    assert_eq!(Language::System.resolve(Language::Korean), Language::Korean);
+    assert_eq!(
         Language::System.resolve(Language::System),
-        Language::EnglishUnitedStates
+        Language::English
     );
     assert_eq!(
-        Language::EnglishUnitedStates.resolve(Language::ChineseSimplified),
-        Language::EnglishUnitedStates
+        Language::English.resolve(Language::ChineseSimplified),
+        Language::English
     );
     assert_eq!(
-        Language::ChineseSimplified.resolve(Language::EnglishUnitedStates),
+        Language::ChineseSimplified.resolve(Language::English),
+        Language::ChineseSimplified
+    );
+    // An explicit choice never follows the system, in either direction.
+    assert_eq!(
+        Language::English.resolve(Language::Arabic),
+        Language::English
+    );
+    assert_eq!(
+        Language::Arabic.resolve(Language::ChineseSimplified),
+        Language::Arabic
+    );
+    assert_eq!(
+        Language::Vietnamese.resolve(Language::ChineseSimplified),
+        Language::Vietnamese
+    );
+    assert_eq!(
+        Language::English.resolve(Language::Vietnamese),
+        Language::English
+    );
+    assert_eq!(
+        Language::Portuguese.resolve(Language::ChineseSimplified),
+        Language::Portuguese
+    );
+    assert_eq!(
+        Language::English.resolve(Language::Portuguese),
+        Language::English
+    );
+    assert_eq!(
+        Language::Korean.resolve(Language::ChineseSimplified),
+        Language::Korean
+    );
+    assert_eq!(
+        Language::English.resolve(Language::Korean),
+        Language::English
+    );
+    assert_eq!(
+        Language::ChineseTraditional.resolve(Language::ChineseSimplified),
+        Language::ChineseTraditional
+    );
+    assert_eq!(
+        Language::ChineseSimplified.resolve(Language::ChineseTraditional),
         Language::ChineseSimplified
     );
 }
@@ -73,6 +189,148 @@ fn language_codes_round_trip_and_unsupported_values_are_rejected() {
     let fixture =
         include_str!("../../../../shared/config/fixtures/invalid-unsupported-language.json");
     assert!(parse_config(fixture.as_bytes()).is_err());
+}
+
+/// A document written before Arabic existed must still load and validate.
+///
+/// The enum only gained a variant, so every value an older build could write is
+/// still one this build accepts, and a persisted configuration is not migrated
+/// or rewritten by the upgrade. A document is read here verbatim rather than
+/// round-tripped through `Default`, because serializing the current default
+/// would prove nothing about what the old bytes contain.
+#[test]
+fn a_configuration_written_before_arabic_existed_still_loads() {
+    let mut document = serde_json::to_value(NativeConfig::default()).expect("serialize default");
+    for language in ["system", "zh-CN", "en-US"] {
+        document["appearance"]["language"] = serde_json::Value::String(language.to_owned());
+        let written = serde_json::to_string(&document).expect("serialize document");
+        let loaded: NativeConfig = serde_json::from_str(&written).expect("read old document");
+        assert_eq!(loaded.appearance.language.code(), language);
+        loaded.validate().expect("an old document still validates");
+    }
+}
+
+/// A document written before the key layer could stack must still load, as the
+/// compatibility mode.
+///
+/// `show_all_pressed_keys` carries `#[serde(default)]` for this reason: the
+/// strict v1 entry point rejects anything it cannot read, so a field an older
+/// build never wrote would otherwise send every existing `config.json` down the
+/// backup-then-default recovery path and reset the user's settings. The document
+/// is edited by removing the key from the *serialized* current default, which is
+/// the shape the old bytes had.
+#[test]
+fn a_configuration_written_before_the_key_layer_could_stack_still_loads() {
+    let mut document = serde_json::to_value(NativeConfig::default()).expect("serialize default");
+    let model = document["model"]
+        .as_object_mut()
+        .expect("model object")
+        .remove("show_all_pressed_keys");
+    assert!(
+        model.is_some(),
+        "the current default still writes the field"
+    );
+    let written = serde_json::to_string(&document).expect("serialize document");
+    let loaded: NativeConfig = serde_json::from_str(&written).expect("read old document");
+    assert!(
+        !loaded.model.show_all_pressed_keys,
+        "a document with no field loads as one image per hand, not as a new opt-in"
+    );
+    loaded.validate().expect("an old document still validates");
+    assert!(parse_config(written.as_bytes()).is_ok());
+}
+
+/// A document written before the expression toggle existed must still load, as
+/// the non-toggling behaviour.
+///
+/// The same reasoning as the key layer above, and the same shape of document: the
+/// field is removed from the *serialized* current default, which is exactly what
+/// the bytes of a build that predates the switch look like. Without the default
+/// this build would refuse to read every existing `config.json`, fall back to a
+/// default configuration, and reset the user's settings.
+#[test]
+fn a_configuration_written_before_the_expression_toggle_still_loads() {
+    let mut document = serde_json::to_value(NativeConfig::default()).expect("serialize default");
+    let model = document["model"]
+        .as_object_mut()
+        .expect("model object")
+        .remove("toggle_repeated_expression");
+    assert!(
+        model.is_some(),
+        "the current default still writes the field"
+    );
+    let written = serde_json::to_string(&document).expect("serialize document");
+    let loaded: NativeConfig = serde_json::from_str(&written).expect("read old document");
+    assert!(
+        !loaded.model.toggle_repeated_expression,
+        "a document with no field loads as the repeat-is-a-no-op behaviour, not as a new opt-in"
+    );
+    loaded.validate().expect("an old document still validates");
+    assert!(parse_config(written.as_bytes()).is_ok());
+}
+
+/// The toggle is its own switch rather than a second remembered-expression field.
+///
+/// Turning a repeated trigger into "turn this expression off" and restoring the
+/// last chosen expression are different decisions, and one implementation detail
+/// of the other: a repeat that closes an expression deliberately records nothing,
+/// so what is remembered is still the last face the user chose to wear.
+#[test]
+fn the_expression_toggle_defaults_to_off_and_is_independent_of_the_memory_switch() {
+    let default = NativeConfig::default();
+    assert!(!default.model.toggle_repeated_expression);
+
+    let mut config = default;
+    config.model.remember_last_expression = true;
+    assert!(
+        !config.model.toggle_repeated_expression,
+        "restoring the last expression says nothing about what a repeat trigger does"
+    );
+    config.model.toggle_repeated_expression = true;
+    assert!(
+        config.model.remember_last_expression,
+        "toggling a repeat says nothing about where a model starts"
+    );
+    config
+        .validate()
+        .expect("both switches on is a valid document");
+}
+
+/// The pointer capture switch round-trips and an older document without the
+/// namespace still loads on the shipped behaviour.
+///
+/// `input.mouse` is a whole new namespace rather than a new field, so the case
+/// that matters is a document with no `mouse` object at all: the strict v1 entry
+/// point rejects anything it cannot read, so without `#[serde(default)]` every
+/// existing `config.json` would go down the backup-then-default recovery path.
+#[test]
+fn the_force_move_switch_round_trips_and_defaults_off_for_older_data() {
+    assert!(!NativeConfig::default().input.mouse.force_move);
+
+    let mut config = NativeConfig::default();
+    config.input.mouse.force_move = true;
+    let encoded = serde_json::to_string(&config).expect("serialize force move");
+    let decoded: NativeConfig = serde_json::from_str(&encoded).expect("deserialize force move");
+    assert!(decoded.input.mouse.force_move);
+    decoded.validate().expect("the switch still validates");
+
+    let mut document = serde_json::to_value(NativeConfig::default()).expect("serialize default");
+    let removed = document["input"]
+        .as_object_mut()
+        .expect("input object")
+        .remove("mouse");
+    assert!(
+        removed.is_some(),
+        "the current default still writes the namespace"
+    );
+    let written = serde_json::to_string(&document).expect("serialize document");
+    let loaded: NativeConfig = serde_json::from_str(&written).expect("read old document");
+    assert!(
+        !loaded.input.mouse.force_move,
+        "a document with no namespace loads on the absolute cursor, not as a new opt-in"
+    );
+    loaded.validate().expect("an old document still validates");
+    assert!(parse_config(written.as_bytes()).is_ok());
 }
 
 #[test]
@@ -128,6 +386,64 @@ fn overlay_hover_hide_delay_accepts_the_first_version_range() {
 }
 
 #[test]
+fn overlay_idle_hide_delay_accepts_the_first_version_range() {
+    for accepted in [0_u32, 1, 10, 60, 599, 600] {
+        let mut config = NativeConfig::default();
+        config.overlay.hide_on_idle_delay_seconds = accepted;
+        assert!(
+            config.validate().is_ok(),
+            "idle hide delay {accepted} must be accepted"
+        );
+    }
+    for rejected in [601_u32, 1_200, u32::MAX] {
+        let mut config = NativeConfig::default();
+        config.overlay.hide_on_idle_delay_seconds = rejected;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue(
+                "overlay.hide_on_idle_delay_seconds"
+            ))
+        ));
+    }
+}
+
+#[test]
+fn overlay_idle_hide_switch_defaults_to_off_and_round_trips() {
+    let config = NativeConfig::default();
+    assert!(!config.overlay.hide_on_idle);
+    assert_eq!(
+        config.overlay.hide_on_idle_delay_seconds,
+        DEFAULT_HIDE_ON_IDLE_DELAY_SECONDS
+    );
+
+    let mut enabled = config;
+    enabled.overlay.hide_on_idle = true;
+    enabled.overlay.hide_on_idle_delay_seconds = 30;
+    enabled.validate().expect("enabled idle hide is valid");
+    let encoded = serde_json::to_string(&enabled).expect("serialize enabled idle hide");
+    let decoded: NativeConfig =
+        serde_json::from_str(&encoded).expect("deserialize enabled idle hide");
+    assert_eq!(decoded, enabled);
+}
+
+#[test]
+fn overlay_idle_hide_fields_default_when_missing_from_older_data() {
+    let mut value = serde_json::to_value(NativeConfig::default()).expect("serialize default");
+    let overlay = value["overlay"]
+        .as_object_mut()
+        .expect("overlay is an object");
+    overlay.remove("hide_on_idle");
+    overlay.remove("hide_on_idle_delay_seconds");
+    let decoded: NativeConfig =
+        serde_json::from_value(value).expect("older config without idle hide fields must load");
+    assert!(!decoded.overlay.hide_on_idle);
+    assert_eq!(
+        decoded.overlay.hide_on_idle_delay_seconds,
+        DEFAULT_HIDE_ON_IDLE_DELAY_SECONDS
+    );
+}
+
+#[test]
 fn overlay_hover_hide_switch_defaults_to_off_and_round_trips() {
     let config = NativeConfig::default();
     assert!(!config.overlay.hide_on_pointer_hover);
@@ -141,6 +457,63 @@ fn overlay_hover_hide_switch_defaults_to_off_and_round_trips() {
     let decoded: NativeConfig =
         serde_json::from_str(&encoded).expect("deserialize enabled hover hide");
     assert_eq!(decoded, enabled);
+}
+
+/// The modifier is one physical key, so every one of the eight has to survive a
+/// write/read cycle as itself — a document that came back naming a different key
+/// would suspend the overlay for a key the user never chose.
+#[test]
+fn the_hold_modifier_stores_one_physical_key_and_defaults_to_none() {
+    assert_eq!(
+        NativeConfig::default().overlay.hold_modifier_to_interact,
+        None
+    );
+
+    for modifier in ModifierKey::ALL {
+        let mut config = NativeConfig::default();
+        config.overlay.hold_modifier_to_interact = Some(modifier);
+        config.validate().expect("a known modifier is valid");
+        let encoded = serde_json::to_string(&config).expect("serialize the hold modifier");
+        let decoded: NativeConfig =
+            serde_json::from_str(&encoded).expect("deserialize the hold modifier");
+        assert_eq!(decoded.overlay.hold_modifier_to_interact, Some(modifier));
+    }
+}
+
+/// A configuration written before the field existed has to keep loading, and on
+/// the side that changes nothing: the shipped default is "no key does this".
+#[test]
+fn the_hold_modifier_defaults_when_missing_from_older_data() {
+    let mut value = serde_json::to_value(NativeConfig::default()).expect("serialize default");
+    let overlay = value["overlay"]
+        .as_object_mut()
+        .expect("overlay is an object");
+    overlay.remove("hold_modifier_to_interact");
+    let decoded: NativeConfig =
+        serde_json::from_value(value).expect("older config without the hold modifier must load");
+    assert_eq!(decoded.overlay.hold_modifier_to_interact, None);
+}
+
+/// The strict v1 parse is the only place an unknown name can be refused. There is
+/// no fallback spelling and no silent "nearest modifier": the field would then
+/// suspend the overlay for a key the document never named.
+#[test]
+fn an_unknown_hold_modifier_is_refused_by_the_strict_parse() {
+    for refused in [
+        "\"shift\"",
+        "\"left\"",
+        "\"left_shift_right\"",
+        "\"Super\"",
+        "4",
+    ] {
+        let mut value = serde_json::to_value(NativeConfig::default()).expect("serialize default");
+        value["overlay"]["hold_modifier_to_interact"] =
+            serde_json::from_str::<serde_json::Value>(refused).expect("a json literal");
+        assert!(
+            serde_json::from_value::<NativeConfig>(value.clone()).is_err(),
+            "{refused} must not resolve to a modifier"
+        );
+    }
 }
 
 #[test]

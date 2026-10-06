@@ -101,13 +101,13 @@ GPUI 用于设置窗口、模型管理、快捷键编辑、权限状态、更新
 
 GPUI 仍是 pre-1.0，公共渲染 API 也没有稳定的 Windows/macOS 外部 Live2D 纹理合成路径。因此：
 
-- 正式 workspace 只直接依赖 crates.io 的 `gpui-kit = "=0.7.0"` 并提交 `Cargo.lock`；GPUI Kit
+- 正式 workspace 只直接依赖 crates.io 的 `gpui-kit = "=0.7.1"` 并提交 `Cargo.lock`；GPUI Kit
   是唯一直接 GPUI 依赖，其 suite 内五个 package 都从同一 registry 版本解析。禁止另行声明或替换
   `gpui`、platform、component 和 assets。
 - v0.7.0 是首个同时发布 `SettingGroup::variant()` 与 `Popover::arrow()` 的 release，此前为拿到
   这两项能力而固定的 `longbridge/gpui-kit` git revision 已删除，`deny.toml` 不再放行该仓库。
-  GPUI Kit 仍通过 crates.io 的 `gpui-pre 0.3.7` 同步包提供元数据对应 Zed `gpui 0.2.2` 的整套
-  GPUI crate，并把这套家族精确 pin 在 `=0.3.7`。
+  GPUI Kit 仍通过 crates.io 的 `gpui-pre 0.3.8` 同步包提供元数据对应 Zed `gpui 0.2.2` 的整套
+  GPUI crate，并把这套家族精确 pin 在 `=0.3.8`。
 - 不自动跟随 Zed main，不直接依赖 Zed 应用内部 UI crate。
 - 以 `gpui_kit::component` 提供的主题和基础组件为 design system 基础；窗口使用其官方
   `Root`，图标使用 `gpui_kit::assets`，项目只保留领域适配、产品 token 覆盖和组件库未覆盖
@@ -139,11 +139,16 @@ GPUI 仍是 pre-1.0，公共渲染 API 也没有稳定的 Windows/macOS 外部 L
   `appearance_changed` 中更新；也不复用 gpui 的外观名映射，因为它不识别
   `AccessibilityHighContrastDarkAqua`，会把开启「提高对比度」的暗色系统判成浅色。主题失败一律
   降级为该表面保持系统外观，不报错、不改配置、不阻止启动。
-- `appearance.language` 只接受 `system`、`zh-CN` 和 `en-US` 三个当前 v1 值，默认 `system`。
-  平台 adapter 在启动时读取系统首选 locale；仅简体中文解析为 `zh-CN`，英语及其它 locale 都
-  回退 `en-US`，不把解析结果写回配置。UI 通过独立 `SettingsLanguage`、revision-checked typed
+- `appearance.language` 只接受 `system`、`zh-CN`、`zh-TW`、`en-US`、`ar-SA`、`vi-VN`、`pt-BR` 和 `ko-KR` 八个当前 v1 值，默认 `system`。
+  平台 adapter 在启动时读取系统首选 locale，并按 primary subtag 归类（RFC 4647 language-subtag
+  fallback）：`ar`、`ar-EG`、`ar-SA` 等阿拉伯语 locale 归为 `ar-SA`，`vi` 与 `vi-VN` 归为 `vi-VN`，
+  `pt` 与 `pt-PT` 归为 `pt-BR`，`ko` 归为 `ko-KR`，简繁之外的英语 locale 归为 `en-US`。`zh` 是
+  primary subtag 唯一无法判定的情形：简繁是不同书写体系而非地区变体，因此 `zh-Hant` 与 `TW`/`HK`/`MO`
+  归为 `zh-TW`，其余 `zh` 标签归为 `zh-CN`。
+  其它 locale 也回退 `en-US`，不把解析结果写回配置。UI 通过独立 `SettingsLanguage`、revision-checked typed
   command 和 GPUI Kit `Select` 修改并立即刷新窗口标题、导航和当前可见文案。
   未知持久化值直接拒绝，不增加 alias、开发中间版本兼容或旧配置导入。
+  语言下拉里每种语言用自身文字书写（endonym），因此看不懂当前窗口语言的用户仍能找回自己的。
 - 启动项等系统能力通过 UI 自有的 typed platform snapshot 显示，由 settings service worker
   读取和显式变更；外部状态变化递增 settings revision。读取失败只形成可重试状态，写入失败
   不改变 config/runtime，Development macOS 的 unsupported 状态不允许发出变更 command。
@@ -389,6 +394,13 @@ Gamepad axes -------- latest-value slot -------+        +--> UI snapshot
 - Key/button down/up、设备连接和 command 必须可靠、有序；溢出是可观测错误，不能静默丢弃。
 - 可靠队列溢出时必须清空无法证明顺序的缓存，并在队首注入 `Reset`；原始失败 item 返回 producer，溢出、恢复和被清理 item 数量进入诊断 snapshot。
 - 鼠标移动和摇杆轴可以合并为最新值，不能阻塞边沿事件。
+- `input.mouse.force_move` 打开时，平台 adapter 不发布绝对光标位置，而是把设备报告的相对位移
+  累加成一个位置再发布（`CursorMotionAccumulator`）：以前台应用捕获指针、把光标钉在一处时，
+  绝对位置不再变化但设备仍在报告每次移动，按绝对位置跟随的模型会停住。累加器以绝对位置为种子，
+  在第一个采样和 viewport 变化时重新对齐，并夹在该 viewport 内；开启与关闭、以及输入 Reset
+  都清空累加值。累加在平台线程完成而不是 runtime：`CursorProducer` 是 latest-value 通道，跨两次
+  发布之间的位移必须在发布前合并，否则被合并掉的采样会连同位移一起丢失。累加值仍走同一条
+  latest-value 通道和同一套平滑，因此 runtime、renderer 和 `ModelSettings` 都不知道这个开关存在。
 - runtime 在独立 latest-value 通道之后按可注入单调时钟平滑光标位置；以 60 FPS 为基准每帧
   保留 `0.75` 的剩余距离，并在逻辑坐标距离小于 `0.5` 时收敛到目标。首个样本和显示器
   viewport 变化直接对齐目标，避免跨显示器插值使用错误坐标系；renderer 只消费平滑后的参数。
@@ -397,6 +409,14 @@ Gamepad axes -------- latest-value slot -------+        +--> UI snapshot
   adapter 关闭默认 jitter/dead-zone filter 和环境 mapping，只负责 fork mapping 后的完整范围值、
   trigger 连续值与无效值诊断，不把设备默认 dead-zone 写入共享协议。轴值随后以
   `ModelInputSnapshot` 的不可变字段投影给 renderer。
+- 手柄六个轴按 `{device_id, connection_generation, axis}` 分别取最新样本，不先挑一个
+  connection 再只投影它的六个值；多手柄同时连接时后动的那只在它动过的轴上立即生效，回中
+  读到 0（ADR-0082，与重构前合并全部手柄的同名轴一致）。
+- `CatParamStickShowLeftHand`/`CatParamStickShowRightHand` 是模型声明的摇杆可见性，由
+  `apply_model_input` 写入：该侧摇杆偏离中心（死区之后）或摇杆键按下即为 1。同一个条件也
+  让该侧 hand-down 落下，但只在模型声明了该参数时——把 ADR-0042 的「缺图不动爪」从按键图
+  片推广到摇杆美术，使键盘/鼠标模型上的摇杆完全惰性。三个事实仍互相独立：`*Stick*Down` 只
+  表示摇杆键，`CatParamStickL*`/`R*` 只表示位置（ADR-0082）。
 - 手柄连接状态的事实来源只有 runtime 的 `InputState`：`RuntimeSnapshot::input` 的
   `connected_gamepad_count` 是上层唯一可读的形式（ADR-0071）。产品 frame source 每帧已经读取
   该 snapshot，因此在「无手柄 ↔ 至少一个手柄」跨帧变化时向 settings service 发送一次无载荷
@@ -455,7 +475,14 @@ Gamepad axes -------- latest-value slot -------+        +--> UI snapshot
   runtime 内部 seed，测试可以通过固定 seed 和单调时间得到同一序列。
 - 用户主动触发的 expression command 除了更新当前 `active_expression`，还写入 runtime snapshot 的
   `user_expression_memory`：该次选择时的模型身份、表情名与 command sequence。随机行为走
-  renderer 而不是 command 队列，因此不会产生这条记录。该记录描述「用户选过什么」而不是
+  renderer 而不是 command 队列，因此不会产生这条记录。
+- `model.toggle_repeated_expression` 打开时，`SetExpression` 请求的表达式等于当前
+  `active_expression` 时该命令变成「关闭」而不是「重新应用」：runtime 让所有表达式图层开始淡出、
+  不压入新图层，`active_expression` 置空，并且**不**写 `user_expression_memory`。关闭动作因此不会
+  进入 `model.last_expressions`，记住的仍然是用户最后选择穿上的那张脸。判定放在 runtime 而不是
+  Application，因为两个触发源（设置窗口的播放按钮与快捷键）都收敛为这一条 command，只有 runtime
+  知道当前生效的是哪个表情；模型切换会先清空 `active_expression`，被延迟到 commit 之后执行的
+  「恢复上次表情」因此永远不会被读成重复触发。该记录描述「用户选过什么」而不是
   「屏幕上是什么」，所以它不随模型切换清除——切换会清掉 `active_expression`，而做出这次选择的
   模型仍需要把记录写进配置。Application 按模型身份把它并入
   `model.last_expressions`；模型成为当前模型时，若 `model.remember_last_expression` 打开且该模型
@@ -546,7 +573,18 @@ Windows 验收覆盖 PixPin `Ctrl+Alt+A`、Win+L、PrintScreen、UAC、管理员
   直接展示主题与语言，不再重复同名分组；Model library 单独展示模型卡片，Model behavior 单独展示模型镜像、动作音效，以及随机播放内容的模式下拉（关闭 / 仅表情 / 仅动作 / 表情和动作，ADR-0072）和它控制的间隔，模型行为快捷键仍留在 Shortcuts；Input & interaction 按 Mouse、Keyboard、
   Gamepad 分组；Gamepad 分组末尾是「连接或断开手柄时自动切换模型」门禁开关及其
   连接/断开两个模型下拉（ADR-0071）；App & system 按 Startup & desktop、Updates、Logging 分组。Updates、Logging 与 Model window 的设置项只保留标题和控件，
-  不显示重复描述。Model window 继续按 Window behavior、Window appearance、Window performance 分组。About 的
+  不显示重复描述。Model window 继续按 Window behavior、Window appearance、Window performance 分组；
+  「按住修饰键进行交互」的录入控件是 Window behavior 分组的**最后一行**（ADR-0080）。它排最后不是随意的：
+  这一行是对另外两行的修饰而不是它们之中的一行，而任何线性位置都无法让它同时挨着那两行——鼠标穿透在
+  第三行、鼠标悬停时隐藏在第六行，中间还隔着「保持在屏幕内」。放在整组之后，它读作对上方设置的一条附注；
+  撤销型修饰出现在被修饰项之后，而不是之前（之前会读成「这个开关启用了它们」）。这一行是 Model window 页
+  唯一带描述的设置项，符合 ADR-0066「描述只在标题与控件说不清时出现」：描述逐字写出被暂停的两项设置在页面上的
+  标题且与页面顺序一致（先「鼠标穿透」，后「鼠标悬停时隐藏」）；控件只显示已录入的键，标题也只说明
+  键的用途，没有说明它影响哪两项、以及松开会不会有事。描述同时承担邻接可能引起的误读——它就在行内，
+  紧贴着它**不**影响的那几行。该描述同时进入搜索索引，因此在任意页面搜索「穿透」
+  或「click-through」都能找到这一行。该行不跟随任何
+  开关门禁，因为它同时被「鼠标穿透」与「鼠标悬停时隐藏」两个开关绑定，而门禁规则绑定的是「一个开关与其下方
+  的设置项」；该行只在结构性编辑阻塞时禁用，取值保留到任一开关打开时生效。About 的
   操作行使用标准设置项：产品信息/手动检查更新、隐私安全的软件信息复制、项目主页、问题反馈和打开
   application-owned 日志目录；日志路径不进入 SettingsSnapshot，由 settings service 持有并校验。
   软件信息复制写入的是一个 JSON 对象而不是本地化文案：字段名稳定，不随界面语言变化，报告方可以检索、
@@ -578,14 +616,20 @@ Windows 验收覆盖 PixPin `Ctrl+Alt+A`、Win+L、PrintScreen、UAC、管理员
   `OpenConfigBackupLocation` 与 `ExportDiagnostics` 仍是 settings service 的强类型排障
   command，不从常规 UI 触发；About 的日志动作只打开应用自有目录，不暴露诊断内容。Development、Production
   和 smoke 的设置窗口使用同一套可见页面、分组和按钮组成；smoke 只改变驱动方式，不额外显示“重置偏好设置”等产品窗口没有的控件。
-- 产品启动时以只读 `CGPreflightListenEventAccess` 检查 Input Monitoring，缺失时用 `rfd` 的原生
-  系统弹框引导用户前往「系统设置 → 隐私与安全性 → 输入监控」。检查非阻塞：主线程完成窗口、
-  菜单栏等正常初始化后，由专用 worker 线程执行检查与提示，提示未应答或被关闭不影响任何产品
-  窗口的显示与使用（ADR-0032「非阻塞执行修正」）。提示不写配置、不写 window state、不缓存
-  「稍后」，每次启动重新读取平台真实状态；提示本身不调用 TCC request，`CGRequestListenEventAccess`
-  仍只在用户点击引导按钮后发生（ADR-0032）。实现必须使用 `rfd` 无父窗口的**异步**消息框：同步路径
-  会在调用线程上构造 `PolicyManager`/`FocusManager` 并触碰共享 `NSApplication`，而 `gpui_macos` 的
-  `MacPlatform::run` 需要该实例是自带 `platform` ivar 的 `GPUIApplication` 子类（ADR-0032「macOS 弹框实现修正」）。
+- 产品启动时以只读 `CGPreflightListenEventAccess` 检查 Input Monitoring，缺失时用原生系统弹框
+  引导用户。检查非阻塞：主线程完成窗口、菜单栏等正常初始化后，由专用 worker 线程执行检查与提示，
+  提示未应答或被关闭不影响任何产品窗口的显示与使用（ADR-0032「非阻塞执行修正」）。提示不写配置、
+  不写 window state、不缓存「稍后」，每次启动重新读取平台真实状态；提示本身不调用 TCC request
+  （ADR-0032）。实现必须使用 `rfd` 无父窗口的**异步**消息框：同步路径会在调用线程上构造
+  `PolicyManager`/`FocusManager` 并触碰共享 `NSApplication`，而 `gpui_macos` 的 `MacPlatform::run`
+  需要该实例是自带 `platform` ivar 的 `GPUIApplication` 子类（ADR-0032「macOS 弹框实现修正」）。
+- macOS 的「授权/去设置」动作在 ADR-0078 之后是 `permission-flow` 的 `INPUT_MONITORING` 引导
+  面板：它把用户送到「系统设置 → 隐私与安全性 → 输入监控」并显示拖拽授权引导。该动作前先执行
+  `tccutil reset ListenEvent com.ayangweb.bongo-cat`，因此每次进入流程都从「未授权」开始。面板的
+  语言跟随产品语言（`CFBundleLocalizations` + 本应用域的 `AppleLanguages`），拖拽目标取自当前
+  可执行文件所在的 bundle。`permission-flow` 的 Swift 静态库带来两项构建前提：链接它的每个包都要
+  在自己的 build script 里加 Swift 运行时 rpath，打包要把 `PermissionFlow_PermissionFlow.bundle`
+  放进 `Contents/Resources`。以上细节与未完成项见 ADR-0078。
 - 监听 tap 被系统禁用、超时和 session 变化，并自动重建。
 - listen-only tap 必须创建在 `kCGHIDEventTap` 的 `kCGHeadInsertEventTap` 位置（与 rdev 的 listen 一致），不得使用 session 层 tail append。实测 macOS 26.5.2：session tail 位置收不到右 Shift 的释放 `FlagsChanged`，且重复按下事件 flags 逐字节相同；同一台机器的 HID head 位置能收到全部修饰键的完整 press/release 对。tap 是 listen-only，只观察不修改、不吞事件；HID 层事件流跨用户会话可见，锁屏/快速用户切换仍依赖既有 session 生命周期 Reset 清空 pressed state。
 - `FlagsChanged` 的 down/up 方向必须在 callback 中冻结，按优先级依次使用：事件 flags 相对上一个 `FlagsChanged` 事件的**设备位**跳变（flags 低 8 位中每个物理修饰键有独立 bit，左右天然区分，同侧兄弟键按住时家族 flag 不清零也不影响）、家族 flag 位跳变（rdev `LAST_FLAGS` 同思路）、按 callback 记录的前一边沿交替。HID head tap 下设备位跳变覆盖全部常规修饰键事件；session tail 上观察到的右 Shift 事件缺失/不变序列由交替回退兜底。decoder 状态不属于 runtime pressed state，并随任何 `Reset` 清空，周期校正强制释放候选时必须同步清除 decoder 记录。不得等到 consumer drain 时用较新的全局状态反推旧事件，无法识别的修饰键必须触发可观测 `Reset`。
@@ -739,7 +783,32 @@ CGEvent keycode `63`（`kVK_Function`）以 `FlagsChanged` + `MaskSecondaryFn` �
 肩键的名字，任何别名表都会把肩键或扳机键解析成对方的图。左右手归属同样由模型自己的目录决定——
 `left-keys` 里的图画在左爪上、`right-keys` 里的画在右爪上，这与旧实现的判定一致，也让 Mver 转换按
 `lefthand`/`righthand` 落盘的结果直接可用。缺图的按钮保持惰性（ADR-0042）；两个摇杆键另外驱动
-`StickLeftDown`/`StickRightDown`，与爪部状态互相独立。
+`StickLeftDown`/`StickRightDown`，摇杆本身另有可见性参数并按下述规则带动爪子（ADR-0082）。
+
+**按键层画在哪个四边形上由按键图自己的尺寸决定，不是恒定等于画布四边形**（见 ADR-0037 修订）。
+`ModelBounds::from_canvas` 给出模型画布在模型空间的四边形，背景就画在它上面；按键图则先经过
+`bongocat-render` 的 `legacy_key_overlay_bounds`：BongoCatMver 把按键图画在窗口原点、一图素对一窗口
+像素，而模型画布居中画在同一个窗口里，因此按键图比画布左移 `(窗口宽 − 按键图宽) / 2` 图素。窗口宽取
+该图自身较大的一边——按键图就是画布在窗口里的尺寸，窗口不会比它窄，作者不按画布尺寸设窗口时用的是
+包含它的正方形——所以按键图宽 ≥ 高时偏移为 0，画布四边形原样返回，出厂预置模型与所有宽按键图模型
+都不动；只有比宽更窄的按键图（例如 issue #1129 的 986×1000 对 1000×1000 窗口）才左移。
+这条规则在双平台渲染器里对每张按键图各建一个四边形缓冲，背景仍用画布四边形，因此旧包与新包、
+`resources` 里任何分辨率与宽高比的按键图都落在同一套几何里，不需要重写已转换的模型资源。
+
+
+列表，双平台渲染器都按这个顺序绘制且都没有深度附件或深度模板，因此**列表里最后一项就是最上层**；
+z 序完全由列表顺序决定，渲染器没有额外状态。`model.show_all_pressed_keys` 决定这份列表的内容：
+
+- 关闭（默认，兼容模式）：`InputState::model_snapshot_with_filter` 对每只手只保留一个"最后按下且仍
+  有效"的按键，左右手各至多一个，按左手先、右手后写入列表。
+- 打开（叠放模式）：每一个仍按住、且模型为它提供了键位图的键都进列表，按
+  `PressedRecord::pressed_at` 与可靠输入队列的 `pressed_sequence` 从旧到新排序。单调时钟是毫秒精度，
+  快速连击会落在同一毫秒内，只有 sequence 能给出全序。
+
+两种模式都不改变 pressed state、释放路径和 `CatParamLeftHandDown`/`CatParamRightHandDown`：只要有任意
+一个绑定到该手的键仍按住，该手就是按下的。`resolve_key_overlays` 只做"按键 → 资产"的解析，不再按手
+折叠；两个按住的键解析到同一张图时（`Fn` 家族回退、小键盘复用主键区图）只画一次，先按下的那个占住
+底层。列表容量固定为 `KeyPressSet::CAPACITY`，溢出时丢最早按下的那几个。
 
 
 ### 11.1 Cubism 边界
@@ -786,7 +855,10 @@ model evaluation + render snapshot
   固定 ID 不重复驱动，缺少该组也不影响
   固定参考目标。声明的 physics3 由 `bongocat-model` 做有界解析、由 `bongocat-live2d` 按 R5
   结构执行固定步进、惯性、延迟和输出插值；旧版资源省略 `Meta.Fps` 时使用当前单调 frame delta，
-  不臆造固定频率，但显式提供的 FPS 仍必须是有限正数；未知输入/输出安全跳过，pose 仍未实现。不得把
+  不臆造固定频率，但显式提供的 FPS 仍必须是有限正数；未知输入/输出安全跳过，pose 仍未实现。
+  physics3 设置项的 `Output` 可以为空数组：官方 schema 只要求该键存在而不约束长度，编辑器
+  导出的模型普遍带有「模拟了粒子但不写回任何参数」的设置项，求值器按同一语义跳过它的写回而
+  不因此拒绝整个包（ADR-0077）；输入项非空和至少两个顶点仍然是硬要求。不得把
   有符号正弦直接钳到单边参数范围，也不得按满量程绝对覆盖参数。completed motion 仍以 clip
   声明时长对应的完整求值样本参与这一步，因此默认值逐帧恢复不会抹掉动作最终姿态；该样本保留
   自然结束 fade 的权重，显式停止的外层正弦权重再与 motion 原有权重路径相乘。`PartOpacity`
@@ -885,6 +957,31 @@ runtime 的 overlay visibility 不受影响，frame source 继续按 `overlay.ma
 `opacity_percent` 共同决定最终 alpha。改变不透明度只更新现有 surface 的 presentation alpha；开关和
 延迟本身也在 frame tick 内原地生效，不触发原生窗口重建。
 
+「按住修饰键以恢复交互」是这两个临时状态之上的一个开关，而不是第三个状态机。
+`overlay.hold_modifier_to_interact` 设置后，平台 owner 在每次 frame tick 内把它与 runtime snapshot
+里的 `input.pressed_modifiers` 相与：按住期间悬停隐藏按「关闭」处理（状态机复位、alpha 淡回
+`opacity_percent`），并且最终穿透判定从 `click_through` 收窄为 `click_through && !held`。因此
+一只配置成「鼠标穿透 + 悬停隐藏」的猫仍然可以被抓住拖动，不必先关掉设置再打开。松开键后两者
+立即恢复，指针通常仍停在窗口内，因此悬停延迟重新开始计时而不是恢复一个已经过期的截止时间。
+该字段只读不改：落盘配置、runtime 设置与 overlay options 都保持用户原值，忘记哪个键也不会在
+下一次按住时改变行为。
+
+`input.pressed_modifiers` 是 runtime pressed set 在八个 HID 修饰键词汇表（`0xE0..=0xE7`）上的投影，
+左右两侧各占一位。它存在的理由是现有两条读法都答不了这个问题：snapshot 只有按键计数，而模型投影
+会丢掉当前模型没有对应按键图的键——修饰键恰好就是模型不会提供的键。因此设置页的录入控件也读它，
+而不是读 GPUI 的按键事件：GPUI 把修饰键报告为不带键身份的布尔标志变化（macOS 上按修饰键根本不
+产生按键事件，Windows 上左右 Shift 的虚拟键码落在同一分支），既分不出左右，也没有可供录入的
+按键事件。控件因此是「按住」语义而非「点按」语义，这也正好是设置本身要求用户做的动作。
+
+无操作隐藏与悬停隐藏是同一呈现通道上的第二个临时状态。`overlay.hide_on_idle` 开启且
+`overlay.hide_on_idle_delay_seconds` 内没有任何新输入时，overlay 把 alpha 淡到 `0` 并强制指针穿透；
+任意新输入重新开始计时并淡回 `opacity_percent`。它的「活动」判定只读 runtime snapshot 里的三个输入
+计数器：输入事件序号、指针采样时间戳、手柄轴已发布样本数。三者任一变化都算一次新活动；鼠标停在
+原地不产生新采样，因此不会把闲置状态续期。平台 owner 不自己监听全局输入，也不新增平台 API。
+两个状态机的 alpha 相乘、穿透取或，因此任意一个生效都不会让 overlay 停在透明但吞掉点击的状态。
+输入服务不在 `Running` 状态时无操作隐藏同样关闭，避免输入链路失效时永久隐藏窗口。窗口、frame
+loop 与 runtime overlay visibility 都不受影响，shutdown 顺序不变。
+
 原生 overlay 窗口创建后默认保持隐藏。平台 owner 只有在对应 renderer 已成功完成至少一次
 非空帧 draw/present 后才允许首次显示；启动、隐藏后重显、设置导致的窗口重建和模型切换重建
 都遵守同一顺序。首帧提交或验证失败时窗口保持隐藏，模型准备失败仍保留当前可用窗口与模型，
@@ -977,7 +1074,8 @@ resolver，不接受外部 `StorageLayout`、根目录或生产路径覆盖；�
   `[1, 3600]` 秒且默认 `30`。两者直接进入当前 v1，不读取旧字段。`model.gamepad_auto_switch` 直接包含当前 v1：门禁
   `enabled` 默认 `false`，`connected_model` 与 `disconnected_model` 是完整 `ModelIdentity` 或
   `null`，`null` 是默认值并表示「上次在该输入族上使用过的模型」；该「上次使用」是
-  Application 的会话状态而不是配置字段（ADR-0071）。`model.remember_last_expression` 与
+  Application 的会话状态而不是配置字段（ADR-0071）。`model.toggle_repeated_expression` 直接包含当前 v1 且默认 `false`，带 `#[serde(default)]`：
+旧文档没有这个键时读出 `false`。`model.remember_last_expression` 与
   `model.last_expressions` 直接包含当前 v1：门禁默认 `false`，列表每个元素是一个
   `{ model: ModelIdentity, expression }` 记录且同一模型最多一条，列表默认为 `[]`。
   记录与门禁分离：记录只由用户主动触发的 expression command 产生，随机行为播放的
@@ -1042,6 +1140,12 @@ resolver，不接受外部 `StorageLayout`、根目录或生产路径覆盖；�
   `config.json` 能解析成 legacy 的 section 形状，且它命名的模式里至少有一个在
   `<资源根>/<模式>/cat_model/` 下恰好带一个 `.model3.json`。缺任一条就回退到普通包导入并
   由那条路径报错，检测本身不报错。
+- 解析 legacy `config.json` 的严格程度必须与它自己的读取端一致：该应用用 JsonCpp
+  `CharReaderBuilder` 读这个文件，而它的默认设置含 `allowComments`，所以模型作者用 `//` 或
+  `/* */` 注释标注键位表是格式本身接受的内容，不是损坏。因此读取前先剔除字符串字面量之外的
+  注释（字符串里的 `/` 是数据，`\"` 不结束字面量），再做严格 JSON 解析。放宽只到注释为止：
+  注释移除不能把不是 config 的文件变成 config，也不能破坏多字节字符——否则检测又会静默回退，
+  用户拿到的仍是「模型包无效」这种与模型无关的解释。
 - 普通包的模式在 staging 复制、键名归一化和第二次 `PreparedModel` 校验之后、原子 rename
   之前判定：任一手出现手柄专用键名（`DPad*`、`*Trigger*`、`South/East/West/North`、
   `Start/Select` 等）判 `gamepad`；否则有 `right-keys` 判 `keyboard`；否则有 `left-keys` 判
@@ -1065,6 +1169,13 @@ resolver，不接受外部 `StorageLayout`、根目录或生产路径覆盖；�
 - 合成图按 lossless 方式重编码（`oxipng`，只开库入口）：位深/颜色类型/调色板/灰度缩减保持解码
   后像素不变，`optimize_alpha` 只改写全透明像素的颜色通道。有损量化库因许可证（GPL）被排除；
   Zopfli 后端实测多 5% 体积换 15 倍时间，不采用。重编码失败写回普通编码结果，不让转换失败。
+- 转换逐字节复制模式的 Live2D 包，唯一例外是 motion 条目里指向源中不存在文件的 `Sound`
+  引用：以「源实际携带的文件集合」判定悬空，丢弃该 `Sound` 键，其余内容保持不变。这沿用上文
+  「少一张键位图不等于这个模型不可用」的决定——从 Cubism 官方示例包改装的模型会留下示例的
+  `Sound` 名，而 Mver 实际从自己的每模式音效列表播放，丢掉这个名字不损失任何东西，保留它则让
+  整个模式过不了包校验。**只丢弃「缺失」的引用**：无法规范化的引用（越出包根、绝对路径）保持
+  原样交由包校验报错，不因为转换而悄悄抹掉一条路径安全发现。没有悬空引用时 entry 逐字节不变，
+  因此转换不会顺手重写第三方模型文件。
 - Mver 源的检测与转换只在 settings service worker 执行，UI executor 不做阻塞文件或模型解析；
   跨模型进度在应用层折叠（累计已完成模型的文件数与字节数、stage 取最大值），因此用户看到的是
   不倒退且终值等于各模型总和的一条序列，而不是卡在第一个模型的终值。标题为
@@ -1274,7 +1385,9 @@ resolver，不接受外部 `StorageLayout`、根目录或生产路径覆盖；�
   直到它被赋予用户可见含义。
 - 安装后是否需要重启进程是**平台事实**：macOS 由库整包替换 `.app`，运行中的进程此后执行已删除的
   文件（预设模型目录是惰性读盘的），因此安装成功后自动重启——先按 §5.3 的顺序完成产品 shutdown，
-  再 `exec` 新构建；Windows 由安装器 `/R` 重启，`Installed` 在该平台不可观测。
+  再以**新进程**启动新构建；Windows 由安装器 `/R` 重启，`Installed` 在该平台不可观测。
+  重启不用 `exec` 替换进程镜像：它不结束进程、PID 不变，而 shutdown 已移除托盘 `NSStatusItem`，
+  替换后的镜像创建的 status item 不会被布局，菜单栏图标因此消失（ADR-0035 §5）。
 - 自动检查由 GPUI 侧调度（开关与间隔只有设置服务读得到）：新配置的
   `updates.check_automatically` 默认为 `false`，不会在启动时主动检查；用户打开后，
   启动后等 10 秒首次检查，之后按 `updates.check_interval_hours` 等待下一次检查；该整小时字段默认 `24`、范围为

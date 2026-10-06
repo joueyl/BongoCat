@@ -25,12 +25,15 @@ fn lifecycle_publishes_typed_snapshots_and_stops_cleanly() {
 
     let settings = OverlaySettings {
         click_through: false,
+        hold_modifier_to_interact: Some(ModifierKey::RightShift),
         always_on_top: false,
         scale_percent: 125,
         opacity_percent: 80,
         corner_radius_percent: 25,
         hide_on_pointer_hover: true,
         hide_on_pointer_hover_delay_seconds: 1,
+        hide_on_idle: true,
+        hide_on_idle_delay_seconds: 2,
         keep_inside_screen: false,
     };
     let sequence = client
@@ -336,6 +339,8 @@ fn model_settings_command_is_revisioned_and_published() {
         mirror_pointer_tracking_vertical: false,
         ignore_keyboard: false,
         ignore_gamepad: false,
+        show_all_pressed_keys: false,
+        toggle_repeated_expression: false,
         ignore_pointer: true,
     };
     let sequence = client

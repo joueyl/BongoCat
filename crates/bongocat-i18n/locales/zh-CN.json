@@ -41,7 +41,7 @@
     "later": "稍后设置",
     "input_monitoring": {
       "title": "需要「输入监控」权限",
-      "description": "BongoCat 需要「输入监控」权限，才能正常接收键盘和鼠标输入。\n\n注意事项：如果列表中已有 BongoCat，请先选中并点击「−」移除，再点击「＋」重新添加。授权完成后，请重启 BongoCat。",
+      "description": "BongoCat 需要「输入监控」权限，才能正常接收键盘和鼠标输入。",
       "open_settings": "打开系统设置"
     },
     "administrator": {
@@ -332,7 +332,7 @@
       "software_info_copy_failed": "无法复制软件信息",
       "external_link_open_failed": "无法打开链接",
       "log_location_open_failed": "无法打开软件日志文件夹",
-      "login_startup_update_failed": "无法更新登录时启动设置",
+      "login_startup_update_failed": "无法更新开机自启动设置",
       "system_icon_update_failed": "无法更新系统图标。",
       "taskbar_icon_update_failed": "无法更新任务栏图标。",
       "dock_icon_update_failed": "无法更新程序坞图标。",
@@ -369,7 +369,12 @@
         "options": {
           "system": "跟随系统",
           "chinese_simplified": "简体中文",
-          "english_united_states": "English"
+          "chinese_traditional": "繁體中文",
+          "english": "English",
+          "arabic": "العربية",
+          "vietnamese": "Tiếng Việt",
+          "portuguese": "Português",
+          "korean": "한국어"
         }
       }
     },
@@ -392,6 +397,14 @@
       "click_through": {
         "label": "鼠标穿透"
       },
+      "hold_modifier_to_interact": {
+        "label": "按住修饰键进行交互",
+        "recording": "按下修饰键以录制",
+        "record_placeholder": "点击以录制修饰键",
+        "side_left": "左",
+        "side_right": "右",
+        "description": "按住时，「鼠标穿透」和「鼠标悬停时隐藏」将暂时失效。"
+      },
       "keep_inside_screen": {
         "label": "保持在屏幕内"
       },
@@ -400,6 +413,12 @@
       },
       "hide_on_mouse_hover_delay": {
         "label": "鼠标悬停时隐藏延迟（秒）"
+      },
+      "hide_on_idle": {
+        "label": "无操作时隐藏"
+      },
+      "hide_on_idle_delay": {
+        "label": "无操作时隐藏延迟（秒）"
       },
       "scale": {
         "label": "窗口缩放"
@@ -424,6 +443,9 @@
         },
         "remember_last_expression": {
           "label": "记住每个模型上次使用的表情"
+        },
+        "toggle_repeated_expression": {
+          "label": "重复触发同一表情时关闭它"
         },
         "random_behavior_mode": {
           "label": "随机播放动作或表情",
@@ -450,12 +472,19 @@
         },
         "ignore_mouse_input": {
           "label": "忽略鼠标输入"
+        },
+        "force_move": {
+          "label": "强制移动鼠标",
+          "description": "在捕获指针的应用（例如全屏游戏）中也能继续跟随鼠标移动。"
         }
       },
       "keyboard": {
         "title": "键盘",
         "ignore_keyboard_input": {
           "label": "忽略键盘输入"
+        },
+        "show_all_pressed_keys": {
+          "label": "同时显示所有按下的键"
         }
       },
       "gamepad": {
@@ -530,7 +559,7 @@
         }
       },
       "open_at_login": {
-        "label": "登录时启动"
+        "label": "开机自启动"
       },
       "startup": {
         "checking": "正在检查登录项…",
@@ -538,9 +567,9 @@
         "stale": "应用位置已变化；重新开关一次即可修复",
         "requires_approval": "请在系统设置中批准 BongoCat",
         "not_found": "登录项缺失；重新开关一次即可修复",
-        "unsupported_platform": "当前系统不支持登录时启动",
-        "unsupported_os": "当前操作系统不支持登录时启动",
-        "unsupported_build": "开发版本不支持登录时启动"
+        "unsupported_platform": "当前系统不支持开机自启动",
+        "unsupported_os": "当前操作系统不支持开机自启动",
+        "unsupported_build": "开发版本不支持开机自启动"
       }
     },
     "multiplayer_room": {

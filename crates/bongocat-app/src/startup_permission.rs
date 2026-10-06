@@ -49,16 +49,26 @@ pub fn ensure_startup_permission(language: Language) -> bongocat_platform::Start
         description: text(keys::DESCRIPTION),
         primary: text(keys::PRIMARY),
         secondary: text(keys::SECONDARY),
+        // The macOS guided flow is a Swift panel with its own catalog, so the adapter needs the
+        // product language to make the panel and this prompt agree (ADR-0078). It is the same
+        // resolved locale the copy above came from.
+        locale: locale.to_owned(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::keys;
+    use bongocat_config::Language;
 
     #[test]
     fn prompt_keys_are_translated_for_every_supported_language() {
-        for locale in ["en-US", "zh-CN"] {
+        // `Language::ALL` rather than a list of codes: a language the product
+        // can be switched to and a catalog that has to carry the prompt are the
+        // same question, and answering it from the enum means adding a language
+        // cannot leave this prompt untranslated.
+        for language in Language::ALL {
+            let locale = bongocat_i18n::locale_code(language.code());
             for key in [
                 keys::TITLE,
                 keys::DESCRIPTION,
@@ -76,11 +86,36 @@ mod tests {
     fn prompt_labels_stay_distinguishable_in_every_language() {
         // The macOS mapping from an `rfd` result back to the user's choice compares the returned
         // label with the primary label, so the two labels must never be interchangeable.
-        for code in ["zh-CN", "en-US"] {
+        for language in Language::ALL {
+            let code = language.code();
+            let locale = bongocat_i18n::locale_code(code);
             assert_ne!(
-                bongocat_i18n::text(code, keys::PRIMARY),
-                bongocat_i18n::text(code, keys::SECONDARY),
+                bongocat_i18n::text(locale, keys::PRIMARY),
+                bongocat_i18n::text(locale, keys::SECONDARY),
                 "{code}"
+            );
+        }
+    }
+
+    /// The macOS description is one purpose sentence, not a how-to.
+    ///
+    /// It used to end with a second paragraph telling the user to remove BongoCat from the Input
+    /// Monitoring list and add it again. The guided flow clears the grant through `tccutil` before
+    /// the panel opens, so that entry is gone by the time the user looks at the list, and the
+    /// paragraph only described work the product already did. A blank line is how a second
+    /// paragraph would come back, which is what this pins. The Windows prompt keeps its own setup
+    /// instructions — nothing else on that platform explains the compatibility flag — so the rule
+    /// is macOS-only.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_macos_prompt_description_is_a_single_paragraph() {
+        for language in Language::ALL {
+            let locale = bongocat_i18n::locale_code(language.code());
+            let description = bongocat_i18n::text(locale, keys::DESCRIPTION);
+            assert!(
+                !description.contains("\n\n"),
+                "{}: the macOS prompt description grew a second paragraph again: {description}",
+                language.code()
             );
         }
     }

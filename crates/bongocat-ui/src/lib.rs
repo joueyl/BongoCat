@@ -6,6 +6,7 @@
 
 use std::time::{Duration, Instant};
 
+mod external_link;
 mod pop_confirm;
 mod window;
 pub use window::{
@@ -32,10 +33,25 @@ pub(crate) fn settings_language_display_name(
             locale,
             "settings.appearance.language.options.chinese_simplified",
         ),
-        SettingsLanguage::EnglishUnitedStates => bongocat_i18n::text(
+        SettingsLanguage::ChineseTraditional => bongocat_i18n::text(
             locale,
-            "settings.appearance.language.options.english_united_states",
+            "settings.appearance.language.options.chinese_traditional",
         ),
+        SettingsLanguage::English => {
+            bongocat_i18n::text(locale, "settings.appearance.language.options.english")
+        }
+        SettingsLanguage::Arabic => {
+            bongocat_i18n::text(locale, "settings.appearance.language.options.arabic")
+        }
+        SettingsLanguage::Vietnamese => {
+            bongocat_i18n::text(locale, "settings.appearance.language.options.vietnamese")
+        }
+        SettingsLanguage::Portuguese => {
+            bongocat_i18n::text(locale, "settings.appearance.language.options.portuguese")
+        }
+        SettingsLanguage::Korean => {
+            bongocat_i18n::text(locale, "settings.appearance.language.options.korean")
+        }
     }
 }
 
@@ -141,7 +157,7 @@ pub(crate) mod tests {
             runtime_diagnostics: SettingsRuntimeDiagnostics::default(),
             appearance_theme: SettingsTheme::System,
             language: SettingsLanguage::System,
-            resolved_language: SettingsLanguage::EnglishUnitedStates,
+            resolved_language: SettingsLanguage::English,
             status_icon_visible: true,
             taskbar_icon_visible: true,
             dock_icon_visible: false,
@@ -157,8 +173,10 @@ pub(crate) mod tests {
             random_behavior: SettingsRandomBehavior::default(),
             model_settings: SettingsModelSettings::default(),
             gamepad_axis_settings: SettingsGamepadAxisSettings::default(),
+            cursor_settings: SettingsCursorSettings::default(),
             gamepad_auto_switch: SettingsGamepadAutoSwitch::default(),
             remember_last_expression: false,
+            toggle_repeated_expression: false,
             logging: SettingsLogging::default(),
             shortcuts: SettingsShortcuts::default(),
             startup_item: SettingsStartupItemStatus::State(SettingsStartupItemState::Disabled),
@@ -255,25 +273,43 @@ pub(crate) mod tests {
 
     #[test]
     fn language_preferences_have_stable_codes_and_localized_names() {
-        let expected = [
-            ("system", "System"),
+        // A language is named by its own endonym in every catalog, the way
+        // `简体中文` already is: a reader who cannot read the current window
+        // language still finds their own. "System" is not one of them — it is
+        // the choice to follow the system, and it is translated like any other
+        // option, so it is asserted separately below.
+        let endonyms = [
             ("zh-CN", "简体中文"),
+            ("zh-TW", "繁體中文"),
             ("en-US", "English"),
+            ("ar-SA", "العربية"),
+            ("vi-VN", "Tiếng Việt"),
+            ("pt-BR", "Português"),
+            ("ko-KR", "한국어"),
         ];
-        for (language, (code, display_name)) in SettingsLanguage::ALL.into_iter().zip(expected) {
+        for (language, (code, endonym)) in SettingsLanguage::ALL
+            .into_iter()
+            .filter(|language| *language != SettingsLanguage::System)
+            .zip(endonyms)
+        {
             assert_eq!(language.code(), code);
-            assert_eq!(
-                settings_language_display_name(language, SettingsLanguage::EnglishUnitedStates),
-                display_name
-            );
-            assert_eq!(
-                settings_language_from_display_name(
-                    display_name,
-                    SettingsLanguage::EnglishUnitedStates
-                ),
-                Some(language)
-            );
+            for display_language in SettingsLanguage::ALL {
+                assert_eq!(
+                    settings_language_display_name(language, display_language),
+                    endonym,
+                    "{code} is named in its own language, shown in {display_language:?}"
+                );
+                assert_eq!(
+                    settings_language_from_display_name(endonym, display_language),
+                    Some(language),
+                    "{endonym} does not select {code} in {display_language:?}"
+                );
+            }
         }
+        assert_eq!(
+            settings_language_display_name(SettingsLanguage::System, SettingsLanguage::English,),
+            "System"
+        );
         assert_eq!(
             settings_language_display_name(
                 SettingsLanguage::System,
@@ -282,9 +318,64 @@ pub(crate) mod tests {
             "跟随系统"
         );
         assert_eq!(
-            settings_language_from_display_name("Deutsch", SettingsLanguage::EnglishUnitedStates,),
+            settings_language_display_name(
+                SettingsLanguage::System,
+                SettingsLanguage::ChineseTraditional,
+            ),
+            "跟隨系統"
+        );
+        assert_eq!(
+            settings_language_display_name(SettingsLanguage::System, SettingsLanguage::Arabic),
+            "حسب النظام"
+        );
+        assert_eq!(
+            settings_language_display_name(SettingsLanguage::System, SettingsLanguage::Vietnamese),
+            "Hệ thống"
+        );
+        assert_eq!(
+            settings_language_display_name(SettingsLanguage::System, SettingsLanguage::Portuguese,),
+            "Sistema"
+        );
+        assert_eq!(
+            settings_language_display_name(SettingsLanguage::System, SettingsLanguage::Korean,),
+            "시스템"
+        );
+        assert_eq!(
+            settings_language_from_display_name("Deutsch", SettingsLanguage::English,),
             None
         );
+    }
+
+    /// Every language the selector offers has to be selectable by its own name.
+    ///
+    /// The selector is a searchable list, so a name that does not round-trip
+    /// through `settings_language_from_display_name` is a row the user can see
+    /// and cannot choose. This is the assertion that catches a language added
+    /// to `SettingsLanguage::ALL` without a catalog entry.
+    #[test]
+    fn every_language_round_trips_in_every_display_language() {
+        for display_language in SettingsLanguage::ALL {
+            let names = SettingsLanguage::ALL
+                .into_iter()
+                .map(|language| settings_language_display_name(language, display_language))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                names.len(),
+                "two languages share one visible name in {display_language:?}: {names:?}"
+            );
+            for language in SettingsLanguage::ALL {
+                let name = settings_language_display_name(language, display_language);
+                assert_eq!(
+                    settings_language_from_display_name(name, display_language),
+                    Some(language),
+                    "{name:?} does not select the language it names in {display_language:?}"
+                );
+            }
+        }
     }
 
     #[test]

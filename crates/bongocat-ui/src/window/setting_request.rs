@@ -54,6 +54,13 @@ impl SettingsView {
             }) => Some(*hide_on_pointer_hover_delay_seconds),
             _ => None,
         };
+        let sent_overlay_idle_hide_delay = match value.as_ref() {
+            Some(SettingValue::OverlayIdleHideDelay {
+                hide_on_idle_delay_seconds,
+                ..
+            }) => Some(*hide_on_idle_delay_seconds),
+            _ => None,
+        };
         let sent_gamepad_dead_zone = match value.as_ref() {
             Some(SettingValue::GamepadAxisSettings { settings, .. }) => Some(*settings),
             _ => None,
@@ -210,6 +217,15 @@ impl SettingsView {
                         .set_overlay_settings(expected_config_revision, settings)
                         .await
                 }
+                Some(SettingValue::OverlayIdleHideDelay {
+                    expected_config_revision,
+                    settings,
+                    ..
+                }) => {
+                    client
+                        .set_overlay_settings(expected_config_revision, settings)
+                        .await
+                }
                 Some(SettingValue::MotionAudioEnabled {
                     expected_config_revision,
                     enabled,
@@ -266,6 +282,14 @@ impl SettingsView {
                         .set_gamepad_axis_settings(expected_config_revision, settings)
                         .await
                 }
+                Some(SettingValue::CursorSettings {
+                    expected_config_revision,
+                    settings,
+                }) => {
+                    client
+                        .set_cursor_settings(expected_config_revision, settings)
+                        .await
+                }
                 Some(SettingValue::GamepadAutoSwitch {
                     expected_config_revision,
                     settings,
@@ -280,6 +304,14 @@ impl SettingsView {
                 }) => {
                     client
                         .set_remember_last_expression(expected_config_revision, enabled)
+                        .await
+                }
+                Some(SettingValue::ToggleRepeatedExpression {
+                    expected_config_revision,
+                    enabled,
+                }) => {
+                    client
+                        .set_toggle_repeated_expression(expected_config_revision, enabled)
                         .await
                 }
                 Some(SettingValue::StartupItemEnabled(enabled)) => {
@@ -348,6 +380,15 @@ impl SettingsView {
                         .mark_sent(&hide_on_pointer_hover_delay_seconds);
                     if view.overlay_hover_hide_delay_debouncer.is_pending() {
                         view.schedule_overlay_hover_hide_delay_flush(cx);
+                    }
+                }
+                if result.is_ok()
+                    && let Some(hide_on_idle_delay_seconds) = sent_overlay_idle_hide_delay
+                {
+                    view.overlay_idle_hide_delay_debouncer
+                        .mark_sent(&hide_on_idle_delay_seconds);
+                    if view.overlay_idle_hide_delay_debouncer.is_pending() {
+                        view.schedule_overlay_idle_hide_delay_flush(cx);
                     }
                 }
                 if result.is_ok()

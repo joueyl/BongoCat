@@ -15,10 +15,13 @@ where
 /// The row is a custom element because the option list is the model catalog, so
 /// it cannot be a static field. The gate still reaches the control itself: the
 /// component forwards the row's disabled state to the renderer, and the select
-/// reads it instead of recomputing the condition.
+/// reads it instead of recomputing the condition. The options are passed in
+/// whole rather than as labels, so the menu width is measured from the very list
+/// the dropdown shows.
 fn gamepad_auto_switch_model_row(
     label_key: &'static str,
     language: SettingsLanguage,
+    choices: Vec<GamepadModelChoice>,
     select: &Entity<GamepadModelSelectState>,
     gate: SettingGate,
 ) -> SettingItem {
@@ -26,8 +29,12 @@ fn gamepad_auto_switch_model_row(
     SettingItem::new(
         bongocat_i18n::text(language.catalog_locale(), label_key),
         SettingField::element(
-            move |options: &RenderOptions, _: &mut Window, _: &mut App| {
+            move |options: &RenderOptions, window: &mut Window, _: &mut App| {
                 Select::new(&select)
+                    .menu_width(dropdown_menu_width(
+                        window,
+                        choices.iter().map(|choice| choice.title()),
+                    ))
                     .disabled(options.is_disabled())
                     .into_any_element()
             },
@@ -105,6 +112,13 @@ impl Render for SettingsView {
         // its row renders disabled rather than accepting a value nothing
         // reads — the unified gate rule's control arm.
         let hover_hide_delay_gate = SettingGate::new(editing_blocked, hover_hide_delay_available);
+        let idle_hide_delay_available = snapshot
+            .as_ref()
+            .is_some_and(|snapshot| idle_hide_delay_applies(snapshot.overlay));
+        // The idle hide delay follows the same rule as the hover one: inert
+        // while its switch is off, so the row renders disabled instead of
+        // accepting a value nothing reads.
+        let idle_hide_delay_gate = SettingGate::new(editing_blocked, idle_hide_delay_available);
         let check_for_updates_interval_gate = SettingGate::new(
             editing_blocked,
             snapshot
@@ -254,9 +268,13 @@ impl Render for SettingsView {
                         ),
                         SettingField::element({
                             let view = view_entity.clone();
-                            move |_: &RenderOptions, _: &mut Window, app: &mut App| {
+                            move |_: &RenderOptions, window: &mut Window, app: &mut App| {
                                 let state = view.read(app).theme_select.clone();
                                 Select::new(&state)
+                                    .menu_width(dropdown_menu_width(
+                                        window,
+                                        theme_options(language),
+                                    ))
                                     .disabled(editing_blocked)
                                     .into_any_element()
                             }
@@ -269,9 +287,15 @@ impl Render for SettingsView {
                         ),
                         SettingField::element({
                             let view = view_entity.clone();
-                            move |_: &RenderOptions, _: &mut Window, app: &mut App| {
+                            move |_: &RenderOptions, window: &mut Window, app: &mut App| {
                                 let state = view.read(app).language_select.clone();
                                 Select::new(&state)
+                                    .menu_width(dropdown_menu_width(
+                                        window,
+                                        SettingsLanguage::ALL.into_iter().map(|option| {
+                                            crate::settings_language_display_name(option, language)
+                                        }),
+                                    ))
                                     .disabled(editing_blocked)
                                     .into_any_element()
                             }
@@ -280,6 +304,19 @@ impl Render for SettingsView {
                 ],
                 &appearance_keywords,
             )));
+
+        // The two gamepad dropdowns are sized from the choices this frame shows,
+        // which is the list `sync_component_inputs` fills them with.
+        let gamepad_connected_choices = gamepad_auto_switch_choices(
+            snapshot.as_ref(),
+            GamepadConnectionState::Connected,
+            language,
+        );
+        let gamepad_disconnected_choices = gamepad_auto_switch_choices(
+            snapshot.as_ref(),
+            GamepadConnectionState::Disconnected,
+            language,
+        );
 
         // The model window itself: how it behaves on the desktop, how it looks,
         // and how often it draws. Model-wide mirroring, audio, and random
@@ -477,6 +514,75 @@ impl Render for SettingsView {
                         ),
                     )
                     .disabled(hover_hide_delay_gate.disables_controls()),
+                    SettingItem::new(
+                        bongocat_i18n::text(
+                            language.catalog_locale(),
+                            "settings.overlay.hide_on_idle.label",
+                        ),
+                        SettingField::switch(
+                            {
+                                let view = view_entity.clone();
+                                move |app| {
+                                    view.read(app)
+                                        .snapshot
+                                        .as_ref()
+                                        .is_some_and(|s| s.overlay.hide_on_idle)
+                                }
+                            },
+                            {
+                                let view = view_entity.clone();
+                                move |value, app| {
+                                    view.update(app, |view, cx| {
+                                        if let Some(snapshot) = view.snapshot.as_ref() {
+                                            let mut settings = snapshot.overlay;
+                                            settings.hide_on_idle = value;
+                                            view.set_overlay_settings(settings, cx);
+                                        }
+                                    });
+                                }
+                            },
+                        ),
+                    ),
+                    SettingItem::new(
+                        bongocat_i18n::text(
+                            language.catalog_locale(),
+                            "settings.overlay.hide_on_idle_delay.label",
+                        ),
+                        SettingField::number_input(
+                            NumberFieldOptions {
+                                min: 0.0,
+                                max: f64::from(bongocat_config::MAXIMUM_HIDE_ON_IDLE_DELAY_SECONDS),
+                                step: 1.0,
+                            },
+                            {
+                                let view = view_entity.clone();
+                                move |app| {
+                                    view.read(app).snapshot.as_ref().map_or(0.0, |s| {
+                                        f64::from(s.overlay.hide_on_idle_delay_seconds)
+                                    })
+                                }
+                            },
+                            {
+                                let view = view_entity.clone();
+                                move |value, app| {
+                                    view.update(app, |view, cx| {
+                                        view.set_overlay_idle_hide_delay_value(value, cx)
+                                    });
+                                }
+                            },
+                        ),
+                    )
+                    .disabled(idle_hide_delay_gate.disables_controls()),
+                    // Last row of the group, on purpose. This row suspends two
+                    // switches rather than standing among them, and no linear
+                    // position can put it next to both: click-through is third
+                    // and hide-on-hover sixth, with keep-on-screen between them.
+                    // After the whole group it reads as a note over the settings
+                    // above it — a modifier that undoes them belongs after them,
+                    // not before — and the description on the row names the two
+                    // it affects, so the rows it merely sits next to cannot be
+                    // mistaken for affected ones.
+                    hold_modifier_row(&view_entity, language, editing_blocked),
                 ],
                         &model_window_behavior_keywords,
                     )),
@@ -706,13 +812,42 @@ impl Render for SettingsView {
                 SettingItem::new(
                     bongocat_i18n::text(
                         language.catalog_locale(),
+                        "settings.models.behavior.toggle_repeated_expression.label",
+                    ),
+                    SettingField::switch(
+                        {
+                            let view = view_entity.clone();
+                            move |app| {
+                                view.read(app)
+                                    .snapshot
+                                    .as_ref()
+                                    .is_some_and(|s| s.toggle_repeated_expression)
+                            }
+                        },
+                        {
+                            let view = view_entity.clone();
+                            move |value, app| {
+                                view.update(app, |view, cx| {
+                                    view.set_toggle_repeated_expression(value, cx)
+                                });
+                            }
+                        },
+                    ),
+                ),
+                SettingItem::new(
+                    bongocat_i18n::text(
+                        language.catalog_locale(),
                         "settings.models.behavior.random_behavior_mode.label",
                     ),
                     SettingField::element({
                         let view = view_entity.clone();
-                        move |options: &RenderOptions, _: &mut Window, app: &mut App| {
+                        move |options: &RenderOptions, window: &mut Window, app: &mut App| {
                             let state = view.read(app).random_behavior_mode_select.clone();
                             Select::new(&state)
+                                .menu_width(dropdown_menu_width(
+                                    window,
+                                    random_behavior_mode_options(language),
+                                ))
                                 .disabled(options.is_disabled())
                                 .into_any_element()
                         }
@@ -870,6 +1005,47 @@ impl Render for SettingsView {
                             },
                         ),
                     ),
+                    // The last row is the one that changes how the pointer is
+                    // read rather than what the model does with it, so it reads
+                    // as a note on the three above: if the pointer does not move
+                    // at all, none of them can have an effect.
+                    SettingItem::new(
+                        bongocat_i18n::text(
+                            language.catalog_locale(),
+                            "settings.input_interaction.mouse.force_move.label",
+                        ),
+                        SettingField::switch(
+                            {
+                                let view = view_entity.clone();
+                                move |app| {
+                                    view.read(app)
+                                        .snapshot
+                                        .as_ref()
+                                        .is_some_and(|s| s.cursor_settings.force_move)
+                                }
+                            },
+                            {
+                                let view = view_entity.clone();
+                                move |value, app| {
+                                    view.update(app, |view, cx| {
+                                        if let Some(s) = view.snapshot.as_ref() {
+                                            let mut settings = s.cursor_settings;
+                                            settings.force_move = value;
+                                            view.set_cursor_settings(settings, cx);
+                                        }
+                                    });
+                                }
+                            },
+                        ),
+                    )
+                    // The one row on this page whose title does not say when it
+                    // applies. "Force mouse movement" reads as a behaviour the
+                    // cat always has, and the whole point is that it only
+                    // matters where the pointer is captured.
+                    .description(bongocat_i18n::text(
+                        language.catalog_locale(),
+                        "settings.input_interaction.mouse.force_move.description",
+                    )),
                 ], &mouse_keywords)),
             SettingGroup::new()
                 .title(bongocat_i18n::text(
@@ -899,6 +1075,39 @@ impl Render for SettingsView {
                                         if let Some(s) = view.snapshot.as_ref() {
                                             let mut settings = s.model_settings;
                                             settings.ignore_keyboard = value;
+                                            view.set_model_settings(settings, cx);
+                                        }
+                                    });
+                                }
+                            },
+                        ),
+                    ),
+                    // After the gate, not before it: the gate decides which keys reach the
+                    // key-image layer at all, and this decides how that layer
+                    // draws them. The label carries the whole meaning, so the
+                    // row stays as compact as its neighbours'.
+                    SettingItem::new(
+                        bongocat_i18n::text(
+                            language.catalog_locale(),
+                            "settings.input_interaction.keyboard.show_all_pressed_keys.label",
+                        ),
+                        SettingField::switch(
+                            {
+                                let view = view_entity.clone();
+                                move |app| {
+                                    view.read(app)
+                                        .snapshot
+                                        .as_ref()
+                                        .is_some_and(|s| s.model_settings.show_all_pressed_keys)
+                                }
+                            },
+                            {
+                                let view = view_entity.clone();
+                                move |value, app| {
+                                    view.update(app, |view, cx| {
+                                        if let Some(s) = view.snapshot.as_ref() {
+                                            let mut settings = s.model_settings;
+                                            settings.show_all_pressed_keys = value;
                                             view.set_model_settings(settings, cx);
                                         }
                                     });
@@ -1041,12 +1250,14 @@ impl Render for SettingsView {
                     gamepad_auto_switch_model_row(
                         "settings.input_interaction.gamepad.connected_model.label",
                         language,
+                        gamepad_connected_choices,
                         &gamepad_connected_model_select,
                         gamepad_auto_switch_gate,
                     ),
                     gamepad_auto_switch_model_row(
                         "settings.input_interaction.gamepad.disconnected_model.label",
                         language,
+                        gamepad_disconnected_choices,
                         &gamepad_disconnected_model_select,
                         gamepad_auto_switch_gate,
                     ),
@@ -1262,9 +1473,13 @@ impl Render for SettingsView {
                         ),
                         SettingField::element({
                             let view = view_entity.clone();
-                            move |_: &RenderOptions, _: &mut Window, app: &mut App| {
+                            move |_: &RenderOptions, window: &mut Window, app: &mut App| {
                                 let state = view.read(app).logging_level_select.clone();
                                 Select::new(&state)
+                                    .menu_width(dropdown_menu_width(
+                                        window,
+                                        logging_level_options(language),
+                                    ))
                                     .disabled(editing_blocked)
                                     .into_any_element()
                             }

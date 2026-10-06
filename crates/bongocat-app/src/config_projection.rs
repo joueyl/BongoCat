@@ -9,8 +9,8 @@ use bongocat_config::{ConfigError, LoggingConfig, LoggingLevel, NativeConfig, Ra
 use bongocat_input::GamepadAxisSettings;
 use bongocat_log::{LogLevel as RuntimeLogLevel, LogSettings as RuntimeLogSettings};
 use bongocat_runtime::{
-    ModelSettings, OverlaySettings, RandomBehaviorMode as RuntimeRandomBehaviorMode,
-    RandomBehaviorSettings,
+    CursorSettings, ModelSettings, OverlaySettings,
+    RandomBehaviorMode as RuntimeRandomBehaviorMode, RandomBehaviorSettings,
 };
 use bongocat_ui_protocol::SettingsRandomBehaviorMode;
 
@@ -64,13 +64,22 @@ pub(crate) const fn settings_logging_from_config(
 pub(crate) fn overlay_settings_from_config(config: &NativeConfig) -> OverlaySettings {
     OverlaySettings {
         click_through: config.overlay.click_through,
+        hold_modifier_to_interact: config.overlay.hold_modifier_to_interact,
         always_on_top: config.overlay.always_on_top,
         scale_percent: config.overlay.scale_percent,
         opacity_percent: config.overlay.opacity_percent,
         corner_radius_percent: config.overlay.corner_radius_percent,
         hide_on_pointer_hover: config.overlay.hide_on_pointer_hover,
         hide_on_pointer_hover_delay_seconds: config.overlay.hide_on_pointer_hover_delay_seconds,
+        hide_on_idle: config.overlay.hide_on_idle,
+        hide_on_idle_delay_seconds: config.overlay.hide_on_idle_delay_seconds,
         keep_inside_screen: config.overlay.keep_inside_screen,
+    }
+}
+
+pub(crate) const fn cursor_settings_from_config(config: &NativeConfig) -> CursorSettings {
+    CursorSettings {
+        force_move: config.input.mouse.force_move,
     }
 }
 
@@ -81,6 +90,8 @@ pub(crate) const fn model_settings_from_config(config: &NativeConfig) -> ModelSe
         mirror_pointer_tracking_vertical: config.model.mirror_pointer_tracking_vertical,
         ignore_keyboard: config.model.ignore_keyboard,
         ignore_gamepad: config.model.ignore_gamepad,
+        show_all_pressed_keys: config.model.show_all_pressed_keys,
+        toggle_repeated_expression: config.model.toggle_repeated_expression,
         ignore_pointer: config.model.ignore_pointer,
     }
 }

@@ -41,12 +41,15 @@ fn application_loads_config_updates_runtime_and_stops() {
 
     let overlay_settings = OverlaySettings {
         click_through: true,
+        hold_modifier_to_interact: Some(ModifierKey::RightControl),
         always_on_top: false,
         scale_percent: 150,
         opacity_percent: 75,
         corner_radius_percent: 25,
         hide_on_pointer_hover: true,
         hide_on_pointer_hover_delay_seconds: 1,
+        hide_on_idle: true,
+        hide_on_idle_delay_seconds: 30,
         keep_inside_screen: false,
     };
     let settings_snapshot = application
@@ -65,6 +68,12 @@ fn application_loads_config_updates_runtime_and_stops() {
             .overlay
             .hide_on_pointer_hover_delay_seconds,
         1
+    );
+    assert!(application.config().overlay.hide_on_idle);
+    assert_eq!(application.config().overlay.hide_on_idle_delay_seconds, 30);
+    assert_eq!(
+        application.config().overlay.hold_modifier_to_interact,
+        Some(ModifierKey::RightControl)
     );
     assert!(!application.config().overlay.keep_inside_screen);
 
@@ -121,7 +130,7 @@ fn a_runtime_motion_audio_opt_in_prepares_the_active_model_without_restarting() 
         layout,
         repository_preset_root().as_path(),
         true,
-        Language::EnglishUnitedStates,
+        Language::English,
     )
     .expect("start rendering application");
     assert!(!application.config().model.play_motion_audio);
@@ -220,14 +229,11 @@ fn system_language_is_resolved_at_start_without_overwriting_the_preference() {
         layout,
         repository_preset_root().as_path(),
         false,
-        Language::EnglishUnitedStates,
+        Language::English,
     )
     .expect("restart with English system language");
     assert_eq!(restarted.config().appearance.language, Language::System);
-    assert_eq!(
-        restarted.effective_language(),
-        Language::EnglishUnitedStates
-    );
+    assert_eq!(restarted.effective_language(), Language::English);
     restarted.shutdown().expect("restart shutdown");
 }
 
@@ -242,6 +248,7 @@ fn application_projects_model_interaction_settings_at_startup() {
     config.model.mirror_pointer_tracking_vertical = true;
     config.model.ignore_keyboard = true;
     config.model.ignore_gamepad = true;
+    config.model.show_all_pressed_keys = true;
     config.model.ignore_pointer = true;
     config.model.random_behavior.mode = RandomBehaviorMode::MotionsAndExpressions;
     config.model.random_behavior.interval_seconds = 17;
@@ -257,6 +264,8 @@ fn application_projects_model_interaction_settings_at_startup() {
             mirror_pointer_tracking_vertical: true,
             ignore_keyboard: true,
             ignore_gamepad: true,
+            show_all_pressed_keys: true,
+            toggle_repeated_expression: false,
             ignore_pointer: true,
         }
     );
@@ -472,7 +481,7 @@ fn application_owns_the_rendering_runtime_and_issues_one_consumer() {
         layout,
         repository_preset_root().as_path(),
         true,
-        Language::EnglishUnitedStates,
+        Language::English,
     )
     .expect("start rendering application");
     let token = application

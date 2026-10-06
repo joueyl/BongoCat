@@ -41,7 +41,7 @@
     "later": "Set Up Later",
     "input_monitoring": {
       "title": "Input Monitoring Permission Required",
-      "description": "BongoCat needs Input Monitoring permission to receive keyboard and mouse input.\n\nNote: if BongoCat is already in the list, select it and click \"−\" to remove it, then click \"+\" to add it again. Restart BongoCat after granting the permission.",
+      "description": "BongoCat needs Input Monitoring permission to receive keyboard and mouse input.",
       "open_settings": "Open System Settings"
     },
     "administrator": {
@@ -332,7 +332,7 @@
       "software_info_copy_failed": "Software information could not be copied",
       "external_link_open_failed": "The link could not be opened",
       "log_location_open_failed": "The application log folder could not be opened",
-      "login_startup_update_failed": "The login startup setting could not be updated",
+      "login_startup_update_failed": "The run at startup setting could not be updated",
       "system_icon_update_failed": "Could not update the system icon.",
       "taskbar_icon_update_failed": "Could not update the taskbar icon.",
       "dock_icon_update_failed": "Could not update the Dock icon.",
@@ -369,7 +369,12 @@
         "options": {
           "system": "System",
           "chinese_simplified": "简体中文",
-          "english_united_states": "English"
+          "chinese_traditional": "繁體中文",
+          "english": "English",
+          "arabic": "العربية",
+          "vietnamese": "Tiếng Việt",
+          "portuguese": "Português",
+          "korean": "한국어"
         }
       }
     },
@@ -392,6 +397,14 @@
       "click_through": {
         "label": "Mouse click-through"
       },
+      "hold_modifier_to_interact": {
+        "label": "Hold a modifier key to interact",
+        "recording": "Press to record a modifier key",
+        "record_placeholder": "Click to record a modifier key",
+        "side_left": "Left",
+        "side_right": "Right",
+        "description": "While held, \"Mouse click-through\" and \"Hide on mouse hover\" are temporarily disabled."
+      },
       "keep_inside_screen": {
         "label": "Keep on screen"
       },
@@ -400,6 +413,12 @@
       },
       "hide_on_mouse_hover_delay": {
         "label": "Mouse hover hide delay (seconds)"
+      },
+      "hide_on_idle": {
+        "label": "Hide when idle"
+      },
+      "hide_on_idle_delay": {
+        "label": "Idle hide delay (seconds)"
       },
       "scale": {
         "label": "Window scale"
@@ -424,6 +443,9 @@
         },
         "remember_last_expression": {
           "label": "Remember the last expression of each model"
+        },
+        "toggle_repeated_expression": {
+          "label": "Turn off an expression when triggered again"
         },
         "random_behavior_mode": {
           "label": "Randomly play motions or expressions",
@@ -450,12 +472,19 @@
         },
         "ignore_mouse_input": {
           "label": "Ignore mouse input"
+        },
+        "force_move": {
+          "label": "Force mouse movement",
+          "description": "Keep following the mouse in applications that capture the pointer, such as full-screen games."
         }
       },
       "keyboard": {
         "title": "Keyboard",
         "ignore_keyboard_input": {
           "label": "Ignore keyboard input"
+        },
+        "show_all_pressed_keys": {
+          "label": "Show every held key"
         }
       },
       "gamepad": {
@@ -530,7 +559,7 @@
         }
       },
       "open_at_login": {
-        "label": "Open at login"
+        "label": "Run at startup"
       },
       "startup": {
         "checking": "Checking the login item…",
@@ -538,9 +567,9 @@
         "stale": "The saved app location changed; turn the switch off and on to repair",
         "requires_approval": "Approve BongoCat in System Settings",
         "not_found": "The login item is missing; turn the switch off and on to repair",
-        "unsupported_platform": "Login startup is unavailable on this system",
-        "unsupported_os": "Login startup is unavailable on this operating system",
-        "unsupported_build": "Login startup is unavailable in development builds"
+        "unsupported_platform": "Running at startup is unavailable on this system",
+        "unsupported_os": "Running at startup is unavailable on this operating system",
+        "unsupported_build": "Running at startup is unavailable in development builds"
       }
     },
     "multiplayer_room": {

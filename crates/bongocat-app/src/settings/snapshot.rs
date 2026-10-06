@@ -237,6 +237,7 @@ pub(super) fn snapshot(
         overlay_visible: runtime.overlay_visible,
         overlay: SettingsOverlay {
             click_through: runtime.overlay_settings.click_through,
+            hold_modifier_to_interact: runtime.overlay_settings.hold_modifier_to_interact,
             always_on_top: runtime.overlay_settings.always_on_top,
             scale_percent: runtime.overlay_settings.scale_percent,
             opacity_percent: runtime.overlay_settings.opacity_percent,
@@ -245,6 +246,8 @@ pub(super) fn snapshot(
             hide_on_pointer_hover_delay_seconds: runtime
                 .overlay_settings
                 .hide_on_pointer_hover_delay_seconds,
+            hide_on_idle: runtime.overlay_settings.hide_on_idle,
+            hide_on_idle_delay_seconds: runtime.overlay_settings.hide_on_idle_delay_seconds,
             keep_inside_screen: runtime.overlay_settings.keep_inside_screen,
         },
         motion_audio_enabled: runtime.motion_audio_enabled,
@@ -265,6 +268,7 @@ pub(super) fn snapshot(
                 .mirror_pointer_tracking_vertical,
             ignore_keyboard: runtime.model_settings.ignore_keyboard,
             ignore_gamepad: runtime.model_settings.ignore_gamepad,
+            show_all_pressed_keys: runtime.model_settings.show_all_pressed_keys,
             ignore_pointer: runtime.model_settings.ignore_pointer,
         },
         gamepad_axis_settings: SettingsGamepadAxisSettings {
@@ -275,10 +279,14 @@ pub(super) fn snapshot(
                 .round()
                 .clamp(0.0, 99.0) as u8,
         },
+        cursor_settings: SettingsCursorSettings {
+            force_move: runtime.cursor_settings.force_move,
+        },
         gamepad_auto_switch: settings_gamepad_auto_switch(
             &application.config().model.gamepad_auto_switch,
         ),
         remember_last_expression: application.config().model.remember_last_expression,
+        toggle_repeated_expression: application.config().model.toggle_repeated_expression,
         logging: settings_logging_from_config(&application.config().logging),
         shortcuts: settings_shortcuts(application.config()),
         startup_item,

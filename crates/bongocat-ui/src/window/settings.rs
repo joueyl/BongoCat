@@ -654,6 +654,56 @@ impl SettingsView {
         }
     }
 
+    /// Apply an idle-hide delay typed or stepped in the overlay settings page.
+    ///
+    /// The delay is how long the mouse, keyboard and gamepad may stay
+    /// untouched before the overlay fades out, so the value is clamped to the
+    /// range the configuration accepts: `0` hides as soon as input stops, and
+    /// the upper bound is the shared `hide_on_idle_delay_seconds` limit rather
+    /// than a UI-local number. The field is whole-second valued, so a
+    /// fractional entry is rounded before it is compared with the current
+    /// configuration.
+    pub(super) fn set_overlay_idle_hide_delay_value(&mut self, raw: f64, cx: &mut Context<Self>) {
+        if self.model_import.is_running() {
+            return;
+        }
+        let value = raw.round().clamp(
+            0.0,
+            f64::from(bongocat_config::MAXIMUM_HIDE_ON_IDLE_DELAY_SECONDS),
+        ) as u32;
+        let Some(snapshot) = self.snapshot.as_ref() else {
+            return;
+        };
+        if snapshot.overlay.hide_on_idle_delay_seconds == value {
+            return;
+        }
+        let expected_config_revision = snapshot.config_revision;
+        let current_overlay = snapshot.overlay;
+        let should_send = self
+            .overlay_idle_hide_delay_debouncer
+            .observe(value, Instant::now())
+            .filter(|_| self.pending.is_none())
+            .and_then(|hide_on_idle_delay_seconds| {
+                expected_config_revision.map(|expected_config_revision| {
+                    let mut settings = current_overlay;
+                    settings.hide_on_idle_delay_seconds = hide_on_idle_delay_seconds;
+                    self.start_request(
+                        PendingOperation::OverlayIdleHideDelay,
+                        Some(SettingValue::OverlayIdleHideDelay {
+                            expected_config_revision,
+                            hide_on_idle_delay_seconds,
+                            settings,
+                        }),
+                        cx,
+                    );
+                })
+            })
+            .is_some();
+        if !should_send {
+            self.schedule_overlay_idle_hide_delay_flush(cx);
+        }
+    }
+
     pub(super) fn set_motion_audio_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         let Some(expected_config_revision) = self
             .snapshot
@@ -688,6 +738,30 @@ impl SettingsView {
         self.start_request(
             PendingOperation::RememberLastExpression,
             Some(SettingValue::RememberLastExpression {
+                expected_config_revision,
+                enabled,
+            }),
+            cx,
+        );
+    }
+
+    /// Whether triggering the expression already showing turns it off.
+    ///
+    /// Sent without a debounce, like the other switches: one click is one write.
+    /// It is a switch of its own rather than a detail of the remembered-expression
+    /// one above it, because the two answer different questions — where a model
+    /// starts, and what a repeat trigger does while it is already wearing a face.
+    pub(super) fn set_toggle_repeated_expression(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let Some(expected_config_revision) = self
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.config_revision)
+        else {
+            return;
+        };
+        self.start_request(
+            PendingOperation::ToggleRepeatedExpression,
+            Some(SettingValue::ToggleRepeatedExpression {
                 expected_config_revision,
                 enabled,
             }),
@@ -889,6 +963,28 @@ impl SettingsView {
         self.start_request(
             PendingOperation::ModelSettings,
             Some(SettingValue::ModelSettings {
+                expected_config_revision,
+                settings,
+            }),
+            cx,
+        );
+    }
+
+    pub(super) fn set_cursor_settings(
+        &mut self,
+        settings: SettingsCursorSettings,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(expected_config_revision) = self
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.config_revision)
+        else {
+            return;
+        };
+        self.start_request(
+            PendingOperation::CursorSettings,
+            Some(SettingValue::CursorSettings {
                 expected_config_revision,
                 settings,
             }),

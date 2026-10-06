@@ -11,6 +11,7 @@ use crate::*;
 // The test prelude. These were one module's imports when every test in the crate
 // shared a single `mod tests`; re-exporting them here lets a test module reach
 // them through `use super::*` instead of repeating the list.
+pub(crate) use crate::config_projection::model_settings_from_config;
 pub(crate) use crate::import_progress::ImportProgressAccumulator;
 pub(crate) use crate::model_input::input_bindings_for_model;
 pub(crate) use crate::model_titles::legacy_model_title;
@@ -21,7 +22,9 @@ pub(crate) use bongocat_config::{
     ModelIdentity, ModelInputMode, ModelSource, NativeConfig, RandomBehaviorMode, StorageLayout,
     Theme as ConfigTheme,
 };
-pub(crate) use bongocat_input::{GamepadAxisSettings, GamepadButton, HandSide, PhysicalKey};
+pub(crate) use bongocat_input::{
+    GamepadAxisSettings, GamepadButton, HandSide, ModifierKey, PhysicalKey,
+};
 pub(crate) use bongocat_live2d_render::KeyImageInventory;
 pub(crate) use bongocat_model::{
     InstalledModel, ModelCatalogEntry, ModelOrigin, ModelPackageLimits,

@@ -35,6 +35,7 @@ use std::{
 };
 
 use async_channel::{Receiver, Sender};
+pub use bongocat_input::{ModifierKey, PressedModifiers};
 
 // The public surface, one module at a time. Nothing here is crate-private — this
 // is the contract both sides speak — so the re-exports are the whole of it and
@@ -76,10 +77,10 @@ pub use runtime::{
     SettingsRuntimeDiagnostics, SettingsRuntimeErrorCode,
 };
 pub use snapshot::{
-    AutomaticUpdateSettings, SettingsGamepadAutoSwitch, SettingsGamepadAxisSettings,
-    SettingsModelBehaviorBinding, SettingsModelSettings, SettingsOverlay, SettingsRandomBehavior,
-    SettingsRandomBehaviorMode, SettingsShortcutBinding, SettingsShortcuts, SettingsSnapshot,
-    SettingsTheme,
+    AutomaticUpdateSettings, SettingsCursorSettings, SettingsGamepadAutoSwitch,
+    SettingsGamepadAxisSettings, SettingsModelBehaviorBinding, SettingsModelSettings,
+    SettingsOverlay, SettingsRandomBehavior, SettingsRandomBehaviorMode, SettingsShortcutBinding,
+    SettingsShortcuts, SettingsSnapshot, SettingsTheme,
 };
 pub use startup::{
     SettingsStartupItemError, SettingsStartupItemState, SettingsStartupItemStatus,

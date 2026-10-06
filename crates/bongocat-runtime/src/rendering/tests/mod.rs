@@ -28,5 +28,6 @@ mod automatic;
 mod chat_bubble;
 mod error;
 mod evaluate;
+mod expression;
 mod model;
 mod motion;

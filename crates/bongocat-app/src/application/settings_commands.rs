@@ -7,16 +7,16 @@
 
 use super::Application;
 use crate::config_projection::{
-    logging_config_from_settings, persistent_dead_zone, random_behavior_mode_to_config,
-    runtime_log_settings,
+    logging_config_from_settings, model_settings_from_config, persistent_dead_zone,
+    random_behavior_mode_to_config, runtime_log_settings,
 };
 use crate::shortcut_config::{active_shortcuts, shortcut_config_from_settings};
 use crate::{ApplicationError, RUNTIME_TIMEOUT};
 use bongocat_config::{Language, Theme as ConfigTheme};
 use bongocat_input::GamepadAxisSettings;
 use bongocat_runtime::{
-    ModelSettings, OverlaySettings, RandomBehaviorSettings, RuntimeCommand, RuntimeCommandFailure,
-    RuntimeRenderErrorCode, RuntimeSnapshot, maximum_fps_is_valid,
+    CursorSettings, ModelSettings, OverlaySettings, RandomBehaviorSettings, RuntimeCommand,
+    RuntimeCommandFailure, RuntimeRenderErrorCode, RuntimeSnapshot, maximum_fps_is_valid,
 };
 
 impl Application {
@@ -182,6 +182,7 @@ impl Application {
         }
         let mut next_config = self.config.clone();
         next_config.overlay.click_through = settings.click_through;
+        next_config.overlay.hold_modifier_to_interact = settings.hold_modifier_to_interact;
         next_config.overlay.always_on_top = settings.always_on_top;
         next_config.overlay.scale_percent = settings.scale_percent;
         next_config.overlay.opacity_percent = settings.opacity_percent;
@@ -189,6 +190,8 @@ impl Application {
         next_config.overlay.hide_on_pointer_hover = settings.hide_on_pointer_hover;
         next_config.overlay.hide_on_pointer_hover_delay_seconds =
             settings.hide_on_pointer_hover_delay_seconds;
+        next_config.overlay.hide_on_idle = settings.hide_on_idle;
+        next_config.overlay.hide_on_idle_delay_seconds = settings.hide_on_idle_delay_seconds;
         next_config.overlay.keep_inside_screen = settings.keep_inside_screen;
         let next_revision = self
             .config_store
@@ -287,6 +290,41 @@ impl Application {
         Ok(())
     }
 
+    /// Persist whether triggering the expression already showing turns it off.
+    ///
+    /// Configuration plus one runtime settings command, because the runtime is
+    /// what owns the decision: it is the only place that knows which expression
+    /// is in effect, and both trigger sources — the settings window's preview
+    /// button and a shortcut — reach it as the same command.
+    ///
+    /// Nothing about the remembered expressions changes. A repeat that turns an
+    /// expression off deliberately records nothing, so what is remembered is
+    /// still the last face the user chose to wear rather than the one they undid.
+    pub fn set_toggle_repeated_expression(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), ApplicationError> {
+        let mut next_config = self.config.clone();
+        next_config.model.toggle_repeated_expression = enabled;
+        next_config.validate()?;
+        let next_revision = self
+            .config_store
+            .commit_if_revision(&next_config, self.ready_config_revision()?)?;
+        let runtime_result = self
+            .runtime
+            .client()
+            .send(RuntimeCommand::SetModelSettings(
+                model_settings_from_config(&next_config),
+            ))
+            .map_err(ApplicationError::RuntimeCommand);
+        // The configuration is the source of truth and the commit already landed,
+        // so a runtime that could not take the setting is recorded rather than
+        // rolled back: the next model settings push carries the same value.
+        self.config = next_config;
+        self.config_revision = Some(next_revision);
+        runtime_result.map(|_| ())
+    }
+
     pub fn set_random_behavior_settings(
         &mut self,
         settings: RandomBehaviorSettings,
@@ -352,6 +390,7 @@ impl Application {
             settings.mirror_pointer_tracking_vertical;
         next_config.model.ignore_keyboard = settings.ignore_keyboard;
         next_config.model.ignore_gamepad = settings.ignore_gamepad;
+        next_config.model.show_all_pressed_keys = settings.show_all_pressed_keys;
         next_config.model.ignore_pointer = settings.ignore_pointer;
         let next_revision = self
             .config_store
@@ -390,6 +429,34 @@ impl Application {
         let client = self.runtime.client();
         let sequence = client
             .send(RuntimeCommand::SetGamepadAxisSettings(settings))
+            .map_err(ApplicationError::RuntimeCommand)?;
+        let snapshot = client
+            .wait_for_command(sequence, RUNTIME_TIMEOUT)
+            .ok_or(ApplicationError::RuntimeDidNotPublish)?;
+        self.config = next_config;
+        self.config_revision = Some(next_revision);
+        Ok(snapshot)
+    }
+
+    /// Persist how the pointer is read before any model sees it.
+    ///
+    /// The runtime does not act on the value itself; it publishes it so the
+    /// overlay session, which owns the platform input service, can push it down.
+    /// The runtime command is still sent here because that is the only path that
+    /// makes the setting visible in the snapshot the overlay reads.
+    pub fn set_cursor_settings(
+        &mut self,
+        settings: CursorSettings,
+    ) -> Result<RuntimeSnapshot, ApplicationError> {
+        let mut next_config = self.config.clone();
+        next_config.input.mouse.force_move = settings.force_move;
+        let next_revision = self
+            .config_store
+            .commit_if_revision(&next_config, self.ready_config_revision()?)?;
+
+        let client = self.runtime.client();
+        let sequence = client
+            .send(RuntimeCommand::SetCursorSettings(settings))
             .map_err(ApplicationError::RuntimeCommand)?;
         let snapshot = client
             .wait_for_command(sequence, RUNTIME_TIMEOUT)

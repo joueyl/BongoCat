@@ -15,28 +15,32 @@ impl InputState {
 
 impl InputState {
     pub fn snapshot(&self) -> InputSnapshot {
-        InputSnapshot {
-            pressed_key_count: self
-                .pressed
-                .keys()
-                .filter(|control| matches!(control, InputControl::Key(_)))
-                .count(),
-            pressed_mouse_button_count: self
-                .pressed
-                .keys()
-                .filter(|control| matches!(control, InputControl::Mouse(_)))
-                .count(),
-            pressed_gamepad_button_count: self
-                .pressed
-                .keys()
-                .filter(|control| matches!(control, InputControl::Gamepad(_)))
-                .count(),
+        // The four counts and the modifier set read the same pressed map, so they
+        // are collected in one pass: this runs on every input edge, and walking
+        // the map five times would make the cost of a fast chord five times what
+        // one walk needs.
+        let mut snapshot = InputSnapshot {
+            pressed_modifiers: PressedModifiers::NONE,
             connected_gamepad_count: self.active_gamepads.len(),
             last_reset_reason: self.last_reset_reason,
             last_input_sequence: self.last_sequence,
             diagnostics: self.diagnostics,
             transport: InputTransportDiagnostics::default(),
+            ..InputSnapshot::default()
+        };
+        for control in self.pressed.keys() {
+            match control {
+                InputControl::Key(key) => {
+                    snapshot.pressed_key_count += 1;
+                    if let Some(modifier) = ModifierKey::from_hid_usage(key.hid_usage()) {
+                        snapshot.pressed_modifiers.insert(modifier);
+                    }
+                }
+                InputControl::Mouse(_) => snapshot.pressed_mouse_button_count += 1,
+                InputControl::Gamepad(_) => snapshot.pressed_gamepad_button_count += 1,
+            }
         }
+        snapshot
     }
 }
 
@@ -70,8 +74,12 @@ impl InputState {
             pointer_z: cursor.z,
             ..ModelInputSnapshot::default()
         };
-        let mut latest_left_key: Option<(MonotonicMillis, KeyPress)> = None;
-        let mut latest_right_key: Option<(MonotonicMillis, KeyPress)> = None;
+        let mut latest_left_key: Option<(PressOrder, KeyPress)> = None;
+        let mut latest_right_key: Option<(PressOrder, KeyPress)> = None;
+        // The layered mode needs every held key, not one per hand, so it collects
+        // the presses and sorts them. The compatibility mode never looks at this
+        // and leaves it empty, so the default path allocates nothing.
+        let mut every_press: Vec<(PressOrder, KeyPress)> = Vec::new();
         for control in self.pressed.keys() {
             let (hand, key) = match control {
                 InputControl::Key(key) if !filter.ignore_keyboard => (
@@ -108,28 +116,75 @@ impl InputState {
                 // with.
                 continue;
             };
-            let (side, latest) = match hand {
+            let side = match hand {
                 HandSide::Left => {
                     snapshot.left_hand_down = true;
-                    (KeySide::Left, &mut latest_left_key)
+                    KeySide::Left
                 }
                 HandSide::Right => {
                     snapshot.right_hand_down = true;
-                    (KeySide::Right, &mut latest_right_key)
+                    KeySide::Right
                 }
             };
             let record = self.pressed.get(control).expect("pressed control record");
             let press = KeyPress { key, side };
-            if latest.is_none_or(|(at, _)| record.pressed_at >= at) {
-                *latest = Some((record.pressed_at, press));
+            let order = PressOrder::of(record);
+            if filter.show_all_pressed_keys {
+                every_press.push((order, press));
+            }
+            let latest = match hand {
+                HandSide::Left => &mut latest_left_key,
+                HandSide::Right => &mut latest_right_key,
+            };
+            if latest.is_none_or(|(at, _)| order >= at) {
+                *latest = Some((order, press));
             }
         }
-        if let Some((_, press)) = latest_left_key {
-            snapshot.key_presses.push(press);
+        if !filter.show_all_pressed_keys {
+            // Compatibility order, unchanged: the left hand's key is drawn before
+            // the right hand's regardless of which was pressed first, so a model
+            // that overlaps the two keeps the same stacking it always had.
+            if let Some((_, press)) = latest_left_key {
+                snapshot.key_presses.push(press);
+            }
+            if let Some((_, press)) = latest_right_key {
+                snapshot.key_presses.push(press);
+            }
+            return snapshot;
         }
-        if let Some((_, press)) = latest_right_key {
+        // Oldest press first, so the key the user pressed last is the last one
+        // the renderer draws and therefore the one on top. `KeyPressSet` keeps
+        // insertion order, which is what makes that stack mean anything.
+        every_press.sort_by_key(|(order, _)| *order);
+        // A device that somehow holds more keys than the layer can draw loses
+        // the oldest ones: the presses still down from a moment ago are the
+        // history, and the ones the user is holding right now are what they are
+        // looking at.
+        let overflow = every_press.len().saturating_sub(KeyPressSet::CAPACITY);
+        for (_, press) in every_press.into_iter().skip(overflow) {
             snapshot.key_presses.push(press);
         }
         snapshot
+    }
+}
+
+/// When a control went down, as a total order over the held set.
+///
+/// The monotonic clock has millisecond resolution, so two keys of a fast chord
+/// can share a timestamp; the sequence number of the edge that pressed the
+/// control is what separates them, and it is monotonic even when a slow
+/// adapter reports two edges in the same millisecond.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PressOrder {
+    pressed_at: MonotonicMillis,
+    pressed_sequence: u64,
+}
+
+impl PressOrder {
+    const fn of(record: &PressedRecord) -> Self {
+        Self {
+            pressed_at: record.pressed_at,
+            pressed_sequence: record.pressed_sequence,
+        }
     }
 }

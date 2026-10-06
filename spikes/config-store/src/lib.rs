@@ -183,6 +183,13 @@ pub enum Theme {
 #[serde(deny_unknown_fields)]
 pub struct OverlayConfig {
     pub click_through: bool,
+    /// The physical modifier key whose hold gives the pointer back to the user.
+    ///
+    /// `#[serde(default)]` mirrors the shared schema: the field arrived after
+    /// the first documents were written, and a document without it has to load
+    /// on the "no modifier" side rather than fail the strict parse.
+    #[serde(default)]
+    pub hold_modifier_to_interact: Option<HoldModifierKey>,
     pub always_on_top: bool,
     pub scale_percent: u16,
     pub opacity_percent: u8,
@@ -190,6 +197,8 @@ pub struct OverlayConfig {
     pub corner_radius_percent: u8,
     pub hide_on_pointer_hover: bool,
     pub hide_on_pointer_hover_delay_seconds: u32,
+    pub hide_on_idle: bool,
+    pub hide_on_idle_delay_seconds: u32,
     pub keep_inside_screen: bool,
 }
 
@@ -197,6 +206,12 @@ pub struct OverlayConfig {
 #[serde(deny_unknown_fields)]
 pub struct InputConfig {
     pub gamepad: GamepadInputConfig,
+    /// How the pointer is read before any model sees it. Carries a default for
+    /// the same reason the product type does: the spike's parse entry point is
+    /// strict too, so a document written before the namespace existed would
+    /// otherwise fail rather than load on the shipped behaviour.
+    #[serde(default)]
+    pub mouse: MouseInputConfig,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -204,6 +219,15 @@ pub struct InputConfig {
 pub struct GamepadInputConfig {
     pub stick_dead_zone: f64,
     pub trigger_dead_zone: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MouseInputConfig {
+    /// Follow relative device motion instead of the absolute cursor position.
+    /// Carries a default for the same reason the product type does.
+    #[serde(default)]
+    pub force_move: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -233,6 +257,27 @@ pub enum LoggingLevel {
     Trace,
 }
 
+/// The modifier key the overlay watches for while it is held.
+///
+/// The spike carries its own copy of the v1 shape, so this mirrors
+/// `bongocat_input::ModifierKey` instead of depending on it. Depending on the
+/// real type would hide the one thing this copy exists to catch: a document that
+/// grows a field or a value the copy has not heard of. A local enum also keeps
+/// the refusal honest — a `String` would accept a name the shared schema rejects,
+/// and the two copies would then disagree about the same file.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HoldModifierKey {
+    LeftControl,
+    LeftShift,
+    LeftAlt,
+    LeftMeta,
+    RightControl,
+    RightShift,
+    RightAlt,
+    RightMeta,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ModelConfig {
@@ -248,6 +293,12 @@ pub struct ModelConfig {
     pub play_motion_audio: bool,
     pub ignore_keyboard: bool,
     pub ignore_gamepad: bool,
+    /// Every held key draws its own image instead of one per hand. Carries a
+    /// default for the same reason the product type does: the strict v1 entry
+    /// point fails on a missing field, so a field without one would send every
+    /// document written before it existed down the recovery path.
+    #[serde(default)]
+    pub show_all_pressed_keys: bool,
     pub ignore_pointer: bool,
     pub random_behavior: RandomBehaviorConfig,
     pub gamepad_auto_switch: GamepadAutoSwitchConfig,
@@ -255,6 +306,11 @@ pub struct ModelConfig {
     /// the recorded expressions are kept but nothing replays them.
     pub remember_last_expression: bool,
     pub last_expressions: Vec<ModelExpressionMemory>,
+    /// A repeat of the expression already showing turns it off. Kept in step with
+    /// the product's schema because this spike's default must still serialize
+    /// identically to `shared/config/fixtures/default.json`.
+    #[serde(default)]
+    pub toggle_repeated_expression: bool,
 }
 
 /// One model's remembered expression, keyed by the complete identity because two
@@ -396,6 +452,7 @@ impl Default for NativeConfig {
             },
             overlay: OverlayConfig {
                 click_through: false,
+                hold_modifier_to_interact: None,
                 always_on_top: true,
                 scale_percent: 100,
                 opacity_percent: 100,
@@ -403,6 +460,8 @@ impl Default for NativeConfig {
                 corner_radius_percent: 0,
                 hide_on_pointer_hover: false,
                 hide_on_pointer_hover_delay_seconds: 0,
+                hide_on_idle: false,
+                hide_on_idle_delay_seconds: 10,
                 keep_inside_screen: true,
             },
             input: InputConfig {
@@ -410,6 +469,7 @@ impl Default for NativeConfig {
                     stick_dead_zone: 0.15,
                     trigger_dead_zone: 0.0,
                 },
+                mouse: MouseInputConfig { force_move: false },
             },
             logging: LoggingConfig::default(),
             model: ModelConfig {
@@ -422,11 +482,13 @@ impl Default for NativeConfig {
                 play_motion_audio: false,
                 ignore_keyboard: false,
                 ignore_gamepad: false,
+                show_all_pressed_keys: false,
                 ignore_pointer: false,
                 random_behavior: RandomBehaviorConfig::default(),
                 gamepad_auto_switch: GamepadAutoSwitchConfig::default(),
                 remember_last_expression: false,
                 last_expressions: Vec::new(),
+                toggle_repeated_expression: false,
             },
             shortcuts: ShortcutConfig::default(),
             system: SystemConfig {
@@ -471,6 +533,11 @@ impl NativeConfig {
         if self.overlay.hide_on_pointer_hover_delay_seconds > 60 {
             return Err(ConfigError::InvalidValue(
                 "overlay.hide_on_pointer_hover_delay_seconds",
+            ));
+        }
+        if self.overlay.hide_on_idle_delay_seconds > 600 {
+            return Err(ConfigError::InvalidValue(
+                "overlay.hide_on_idle_delay_seconds",
             ));
         }
         if !(0.0..1.0).contains(&self.input.gamepad.stick_dead_zone)
@@ -1206,6 +1273,9 @@ mod tests {
                 .get("hide_on_pointer_hover_delay_seconds")
                 .is_some()
         );
+        assert!(value["overlay"].get("hide_on_idle").is_some());
+        assert!(value["overlay"].get("hide_on_idle_delay_seconds").is_some());
+        assert!(value["overlay"].get("hold_modifier_to_interact").is_some());
         // The overlay presentation fields are part of the current v1, so the
         // legacy store spelling must stay absent rather than come back with
         // them.
@@ -1215,6 +1285,8 @@ mod tests {
         assert!(value["input"].get("gamepad_trigger_dead_zone").is_none());
         assert!(value["input"]["gamepad"].get("stick_dead_zone").is_some());
         assert!(value["input"]["gamepad"].get("trigger_dead_zone").is_some());
+        // The pointer capture switch is its own namespace in the current v1.
+        assert!(value["input"]["mouse"].get("force_move").is_some());
         assert!(value["input"].get("keyboard").is_none());
         assert!(value["logging"].get("level").is_some());
         assert!(value["logging"].get("retention_days").is_some());
@@ -1340,6 +1412,7 @@ mod tests {
             ("hideOnHover", serde_json::json!(true)),
             ("hideOnHoverDelay", serde_json::json!(250)),
             ("hide_on_pointer_hover_delay_ms", serde_json::json!(250)),
+            ("hide_on_idle_delay_ms", serde_json::json!(250)),
         ] {
             let mut config = serde_json::to_value(NativeConfig::default()).unwrap();
             config["overlay"][field] = value;
@@ -1383,6 +1456,53 @@ mod tests {
     }
 
     #[test]
+    fn the_hold_modifier_names_one_known_key_and_defaults_to_none() {
+        // The shipped default is "no key does this", and it has to reach the
+        // shared fixture as an explicit `null` rather than an absent key: the
+        // document this spike commits is the one the product reads back.
+        let value = serde_json::to_value(NativeConfig::default()).unwrap();
+        assert!(value["overlay"]["hold_modifier_to_interact"].is_null());
+
+        // A document written before the field existed has to load.
+        let mut older = value.clone();
+        older["overlay"]
+            .as_object_mut()
+            .unwrap()
+            .remove("hold_modifier_to_interact");
+        let decoded: NativeConfig = serde_json::from_value(older).expect("older document loads");
+        assert_eq!(decoded.overlay.hold_modifier_to_interact, None);
+
+        for (name, modifier) in [
+            ("left_control", HoldModifierKey::LeftControl),
+            ("left_shift", HoldModifierKey::LeftShift),
+            ("left_alt", HoldModifierKey::LeftAlt),
+            ("left_meta", HoldModifierKey::LeftMeta),
+            ("right_control", HoldModifierKey::RightControl),
+            ("right_shift", HoldModifierKey::RightShift),
+            ("right_alt", HoldModifierKey::RightAlt),
+            ("right_meta", HoldModifierKey::RightMeta),
+        ] {
+            let mut document = value.clone();
+            document["overlay"]["hold_modifier_to_interact"] = serde_json::json!(name);
+            let decoded: NativeConfig =
+                serde_json::from_value(document).unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert_eq!(decoded.overlay.hold_modifier_to_interact, Some(modifier));
+        }
+
+        // The two sides are separate values, and a name outside the eight is
+        // refused rather than resolved to a key the document never named.
+        assert_ne!(HoldModifierKey::LeftShift, HoldModifierKey::RightShift);
+        for refused in ["shift", "left", "left_shift_right", "Super", "0xe1"] {
+            let mut document = value.clone();
+            document["overlay"]["hold_modifier_to_interact"] = serde_json::json!(refused);
+            assert!(
+                serde_json::from_value::<NativeConfig>(document).is_err(),
+                "{refused} must not resolve to a modifier"
+            );
+        }
+    }
+
+    #[test]
     fn gamepad_dead_zones_follow_the_shared_range_contract() {
         for (stick, trigger, field) in [
             (-0.01, 0.0, "input.gamepad.stick_dead_zone"),
@@ -1404,23 +1524,26 @@ mod tests {
 
     #[test]
     fn overlay_presentation_fields_follow_the_shared_range_contract() {
-        for (corner_radius, hide_delay, field) in [
-            (51, 0, "overlay.corner_radius_percent"),
-            (0, 61, "overlay.hide_on_pointer_hover_delay_seconds"),
+        for (corner_radius, hide_delay, idle_delay, field) in [
+            (51, 0, 0, "overlay.corner_radius_percent"),
+            (0, 61, 0, "overlay.hide_on_pointer_hover_delay_seconds"),
+            (0, 0, 601, "overlay.hide_on_idle_delay_seconds"),
         ] {
             let mut config = NativeConfig::default();
             config.overlay.corner_radius_percent = corner_radius;
             config.overlay.hide_on_pointer_hover_delay_seconds = hide_delay;
+            config.overlay.hide_on_idle_delay_seconds = idle_delay;
             assert!(matches!(
                 config.validate(),
                 Err(ConfigError::InvalidValue(actual)) if actual == field
             ));
         }
 
-        for (corner_radius, hide_delay) in [(0, 0), (25, 3), (50, 60)] {
+        for (corner_radius, hide_delay, idle_delay) in [(0, 0, 0), (25, 3, 10), (50, 60, 600)] {
             let mut config = NativeConfig::default();
             config.overlay.corner_radius_percent = corner_radius;
             config.overlay.hide_on_pointer_hover_delay_seconds = hide_delay;
+            config.overlay.hide_on_idle_delay_seconds = idle_delay;
             config
                 .validate()
                 .expect("in-range overlay presentation values are valid");

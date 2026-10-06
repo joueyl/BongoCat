@@ -40,15 +40,16 @@ use std::{
 
 pub use bongocat_input::{
     CursorPosition, CursorProducer, CursorPublishError, CursorSample, CursorSampleError,
-    CursorSnapshot, CursorTransportDiagnostics, CursorViewport, GamepadAxis, GamepadAxisKey,
-    GamepadAxisProducer, GamepadAxisPublishError, GamepadAxisSample, GamepadAxisSettings,
-    GamepadAxisTransportDiagnostics, GamepadButton, GamepadButtonKey, GamepadConnection,
-    GamepadConnectionError, HandSide, InputBindings, InputControl, InputDiagnostics, InputEdge,
-    InputEvent, InputProducer, InputPublishError, InputResetReason, InputSource, InputSubmitError,
-    InputSubmitter, InputTransportDiagnostics, MonotonicMillis, MouseButton,
-    NormalizedCursorPosition, PhysicalKey, PlatformInputDiagnostics,
+    CursorSettings, CursorSnapshot, CursorTransportDiagnostics, CursorViewport, GamepadAxis,
+    GamepadAxisKey, GamepadAxisProducer, GamepadAxisPublishError, GamepadAxisSample,
+    GamepadAxisSettings, GamepadAxisTransportDiagnostics, GamepadButton, GamepadButtonKey,
+    GamepadConnection, GamepadConnectionError, HandSide, InputBindings, InputControl,
+    InputDiagnostics, InputEdge, InputEvent, InputProducer, InputPublishError, InputResetReason,
+    InputSource, InputSubmitError, InputSubmitter, InputTransportDiagnostics, ModifierKey,
+    MonotonicMillis, MouseButton, NormalizedCursorPosition, PhysicalKey, PlatformInputDiagnostics,
     PlatformInputDiagnosticsProducer, PlatformInputDiagnosticsPublishError,
-    PlatformInputServiceStatus, SequencedInputEvent, is_stable_platform_input_error_code,
+    PlatformInputServiceStatus, PressedModifiers, SequencedInputEvent,
+    is_stable_platform_input_error_code,
 };
 use bongocat_input::{CursorSmoother, DEFAULT_GAMEPAD_AXIS_CAPACITY};
 pub use client::RuntimeClient;
@@ -163,9 +164,38 @@ pub const fn hover_hide_delay_ms(seconds: u32) -> u32 {
     seconds.saturating_mul(1_000)
 }
 
+/// Upper bound of the idle hide delay, in whole seconds.
+///
+/// Higher than the hover ceiling because watching a static desktop is a
+/// minutes-scale activity; the configuration schema documents the same
+/// bound at its validation entry point.
+pub const MAXIMUM_HIDE_ON_IDLE_DELAY_SECONDS: u32 = 600;
+
+/// Default idle hide delay, in whole seconds.
+///
+/// Ten seconds is long enough that reading a static desktop is not
+/// interrupted and short enough that the cat leaves the screen promptly.
+pub const DEFAULT_HIDE_ON_IDLE_DELAY_SECONDS: u32 = 10;
+
+/// The same ceiling in the milliseconds the overlay frame loop counts in.
+pub const MAXIMUM_HIDE_ON_IDLE_DELAY_MS: u32 = MAXIMUM_HIDE_ON_IDLE_DELAY_SECONDS * 1_000;
+
+/// The idle hide delay in the milliseconds the overlay frame loop counts in.
+///
+/// Same unit conversion as [`hover_hide_delay_ms`].
+pub const fn idle_hide_delay_ms(seconds: u32) -> u32 {
+    seconds.saturating_mul(1_000)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OverlaySettings {
     pub click_through: bool,
+    /// The physical modifier key whose hold gives the pointer back to the user.
+    ///
+    /// The overlay suspends click-through and the hover hide for exactly as long
+    /// as this key is held, so the settings that hide the overlay do not also
+    /// make it impossible to move. `None` means no key does this.
+    pub hold_modifier_to_interact: Option<ModifierKey>,
     pub always_on_top: bool,
     pub scale_percent: u16,
     pub opacity_percent: u8,
@@ -183,6 +213,14 @@ pub struct OverlaySettings {
     /// How long the pointer must stay inside the overlay window before the
     /// hover hide starts, in whole seconds. `0` hides immediately.
     pub hide_on_pointer_hover_delay_seconds: u32,
+    /// Hide the overlay content after no input arrives for a stretch of
+    /// time. Same temporary presentation as the hover hide: the window and
+    /// the frame loop keep running and only the alpha and pointer routing
+    /// change.
+    pub hide_on_idle: bool,
+    /// How long no input may arrive before the idle hide starts, in whole
+    /// seconds. `0` hides as soon as input stops.
+    pub hide_on_idle_delay_seconds: u32,
     /// Keep the overlay window fully on a display. The region is the union of
     /// the connected displays rather than one display's work area, so the
     /// window may cover a taskbar, Dock or menu bar; a window dragged off the
@@ -195,12 +233,15 @@ impl Default for OverlaySettings {
     fn default() -> Self {
         Self {
             click_through: false,
+            hold_modifier_to_interact: None,
             always_on_top: true,
             scale_percent: 100,
             opacity_percent: 100,
             corner_radius_percent: 0,
             hide_on_pointer_hover: false,
             hide_on_pointer_hover_delay_seconds: 0,
+            hide_on_idle: false,
+            hide_on_idle_delay_seconds: DEFAULT_HIDE_ON_IDLE_DELAY_SECONDS,
             keep_inside_screen: true,
         }
     }
@@ -215,6 +256,7 @@ impl OverlaySettings {
             && self.corner_radius_percent <= 50
             && self.hide_on_pointer_hover_delay_seconds
                 <= MAXIMUM_HIDE_ON_POINTER_HOVER_DELAY_SECONDS
+            && self.hide_on_idle_delay_seconds <= MAXIMUM_HIDE_ON_IDLE_DELAY_SECONDS
     }
 }
 
@@ -229,6 +271,20 @@ pub struct ModelSettings {
     pub ignore_keyboard: bool,
     /// Whether gamepad input is excluded from the model's input projection.
     pub ignore_gamepad: bool,
+    /// Whether the key-image layer draws every held key with artwork, stacked in
+    /// press order, instead of one image per hand.
+    ///
+    /// The paw parameters do not depend on this: a hand is down while any key
+    /// bound to it is held either way.
+    pub show_all_pressed_keys: bool,
+    /// Whether a command for the expression already in effect turns it off.
+    ///
+    /// The runtime owns this decision because it is the only place that knows
+    /// which expression is in effect: both trigger sources converge on
+    /// [`RuntimeCommand::SetExpression`], the settings window's preview button
+    /// and a shortcut alike. The idle scheduler deliberately does not go through
+    /// that command, so an automatic pick never toggles the user's own face off.
+    pub toggle_repeated_expression: bool,
     pub ignore_pointer: bool,
 }
 
@@ -420,6 +476,7 @@ pub enum RuntimeCommand {
     SetMotionAudioEnabled(bool),
     SetInputBindings(Arc<InputBindings>),
     SetGamepadAxisSettings(GamepadAxisSettings),
+    SetCursorSettings(CursorSettings),
     ResetInput(InputResetReason),
     ApplyInput(Arc<SequencedInputEvent>),
     ActivateModel(Arc<CommittedModel>),
@@ -486,6 +543,12 @@ pub struct RuntimeSnapshot {
     pub random_behavior_settings: RandomBehaviorSettings,
     pub model_settings: ModelSettings,
     pub gamepad_axis_settings: GamepadAxisSettings,
+    /// How the pointer is read before any model sees it.
+    ///
+    /// The runtime owns this because the configuration does, but the value is
+    /// consumed by the overlay session, which is what owns the platform input
+    /// service and pushes it down. See [`CursorSettings::force_move`].
+    pub cursor_settings: CursorSettings,
     pub motion_audio_enabled: bool,
     pub motion_audio: MotionAudioDiagnostics,
     pub active_model: Option<ModelSnapshot>,
@@ -528,6 +591,7 @@ impl RuntimeSnapshot {
             random_behavior_settings: RandomBehaviorSettings::default(),
             model_settings: ModelSettings::default(),
             gamepad_axis_settings: GamepadAxisSettings::default(),
+            cursor_settings: CursorSettings::default(),
             motion_audio_enabled,
             motion_audio,
             active_model: None,

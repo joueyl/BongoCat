@@ -67,6 +67,26 @@
       "expected": "reject"
     },
     {
+      "id": "hold-modifier-to-interact",
+      "file": "accept-hold-modifier-to-interact.json",
+      "expected": "accept"
+    },
+    {
+      "id": "hold-modifier-to-interact-unknown",
+      "file": "invalid-hold-modifier-to-interact.json",
+      "expected": "reject"
+    },
+    {
+      "id": "idle-hide",
+      "file": "accept-idle-hide.json",
+      "expected": "accept"
+    },
+    {
+      "id": "idle-hide-delay-out-of-range",
+      "file": "invalid-idle-hide-delay.json",
+      "expected": "reject"
+    },
+    {
       "id": "incomplete-model-identity",
       "file": "invalid-incomplete-model-identity.json",
       "expected": "reject"
@@ -79,6 +99,21 @@
     {
       "id": "gamepad-dead-zone",
       "file": "invalid-gamepad-dead-zone.json",
+      "expected": "reject"
+    },
+    {
+      "id": "force-move-mouse",
+      "file": "accept-force-move-mouse.json",
+      "expected": "accept"
+    },
+    {
+      "id": "input-without-mouse",
+      "file": "accept-input-without-mouse.json",
+      "expected": "accept"
+    },
+    {
+      "id": "force-move-mouse-not-a-boolean",
+      "file": "invalid-force-move-mouse.json",
       "expected": "reject"
     },
     {

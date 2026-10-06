@@ -54,7 +54,7 @@ fn model_behavior_rows_are_named_by_flattened_position() {
 
     let english = rows
         .iter()
-        .map(|row| row.name(SettingsLanguage::EnglishUnitedStates))
+        .map(|row| row.name(SettingsLanguage::English))
         .collect::<Vec<_>>();
     assert_eq!(
         english,
@@ -160,7 +160,7 @@ fn app_system_smoke_checks_visible_copy_and_bounds(cx: &mut TestAppContext) {
 fn logging_level_options_use_the_complete_reversible_localized_catalog() {
     let expected = [
         (
-            SettingsLanguage::EnglishUnitedStates,
+            SettingsLanguage::English,
             [
                 "Errors only",
                 "Errors and warnings",
@@ -190,7 +190,7 @@ fn logging_level_options_use_the_complete_reversible_localized_catalog() {
         }
     }
     assert_eq!(
-        logging_level_from_display_name("not a log level", SettingsLanguage::EnglishUnitedStates),
+        logging_level_from_display_name("not a log level", SettingsLanguage::English),
         None
     );
 }
@@ -237,7 +237,7 @@ fn the_two_gamepad_auto_switch_dropdowns_offer_disjoint_model_families() {
             },
         ),
     ];
-    let language = SettingsLanguage::EnglishUnitedStates;
+    let language = SettingsLanguage::English;
 
     let connected =
         gamepad_auto_switch_options(&entries, GamepadConnectionState::Connected, None, language);
@@ -371,7 +371,7 @@ fn logging_retention_is_presented_as_whole_days_from_one_to_thirty() {
 #[test]
 fn appearance_theme_selection_has_stable_indices_and_system_projection() {
     assert_eq!(
-        theme_options(SettingsLanguage::EnglishUnitedStates),
+        theme_options(SettingsLanguage::English),
         ["System", "Light", "Dark"]
     );
     assert_eq!(
@@ -383,7 +383,7 @@ fn appearance_theme_selection_has_stable_indices_and_system_projection() {
         Some(SettingsTheme::Dark)
     );
     assert_eq!(
-        theme_from_display_name("Unknown", SettingsLanguage::EnglishUnitedStates),
+        theme_from_display_name("Unknown", SettingsLanguage::English),
         None
     );
     assert_eq!(theme_index(SettingsTheme::System), 0);
@@ -473,12 +473,15 @@ fn the_native_and_component_halves_pin_together() {
 fn overlay_stepper_values_are_bounded_and_preserve_other_settings() {
     let settings = SettingsOverlay {
         click_through: false,
+        hold_modifier_to_interact: Some(ModifierKey::LeftShift),
         always_on_top: false,
         scale_percent: 100,
         opacity_percent: 50,
         corner_radius_percent: 25,
         hide_on_pointer_hover: true,
         hide_on_pointer_hover_delay_seconds: 2,
+        hide_on_idle: true,
+        hide_on_idle_delay_seconds: 45,
         keep_inside_screen: false,
     };
     assert_eq!(stepped_overlay_scale(settings, -25).scale_percent, 75);
@@ -496,7 +499,15 @@ fn overlay_stepper_values_are_bounded_and_preserve_other_settings() {
     assert_eq!(changed.corner_radius_percent, 25);
     assert!(changed.hide_on_pointer_hover);
     assert_eq!(changed.hide_on_pointer_hover_delay_seconds, 2);
+    assert!(changed.hide_on_idle);
+    assert_eq!(changed.hide_on_idle_delay_seconds, 45);
     assert!(!changed.keep_inside_screen);
+    assert_eq!(
+        changed.hold_modifier_to_interact,
+        Some(ModifierKey::LeftShift),
+        "stepping one overlay control must not drop the modifier the window reads to \
+         decide the overlay is reachable"
+    );
 }
 
 /// The hover hide delay belongs to the switch above it.
@@ -521,6 +532,32 @@ fn the_hover_hide_delay_only_applies_while_the_switch_is_on() {
         };
         assert_eq!(
             hover_hide_delay_applies(overlay),
+            expected,
+            "{overlay:?} must follow the switch rather than the delay"
+        );
+    }
+}
+
+/// The idle hide delay follows the same rule as the hover one.
+///
+/// Both overlay backends arm the behaviour with `options.hide_on_idle &&
+/// input_running`, so the delay row is inert while the switch is off, and
+/// turning the switch off must leave the recorded delay alone.
+#[test]
+fn the_idle_hide_delay_only_applies_while_the_switch_is_on() {
+    for (hide_on_idle, delay_seconds, expected) in [
+        (false, 0, false),
+        (false, 300, false),
+        (true, 0, true),
+        (true, 300, true),
+    ] {
+        let overlay = SettingsOverlay {
+            hide_on_idle,
+            hide_on_idle_delay_seconds: delay_seconds,
+            ..SettingsOverlay::default()
+        };
+        assert_eq!(
+            idle_hide_delay_applies(overlay),
             expected,
             "{overlay:?} must follow the switch rather than the delay"
         );
@@ -732,6 +769,65 @@ fn the_remembered_expression_switch_sends_the_revision_it_was_rendered_from(
                 .map(|snapshot| snapshot.remember_last_expression),
             Some(true),
             "the confirmed snapshot is what the switch then renders"
+        );
+    });
+    assert!(endpoint.try_recv().is_err());
+}
+
+/// The toggle is its own row and its own command, not a second field of the
+/// remembered-expression switch.
+///
+/// They sit next to each other on the page, which is exactly why they need to stay
+/// separable: remembering a face and reacting to a repeated trigger are different
+/// questions, and a row that changed one while the user reached for the other is
+/// the failure this guards.
+#[gpui_kit::test]
+fn the_expression_toggle_switch_sends_its_own_command(cx: &mut TestAppContext) {
+    let (view, visual, endpoint) = settings_view_with_endpoint(cx);
+    let mut initial = crate::tests::snapshot(4, true, true);
+    initial.config_revision = Some(4);
+    assert!(
+        !initial.toggle_repeated_expression,
+        "a fresh configuration repeats an expression rather than turning it off"
+    );
+    view.update(visual, |view, _| view.snapshot = Some(initial));
+
+    view.update(visual, |view, cx| {
+        view.set_toggle_repeated_expression(true, cx);
+    });
+    visual.run_until_parked();
+    let crate::SettingsCommand::SetToggleRepeatedExpression {
+        expected_config_revision,
+        enabled,
+        reply,
+    } = endpoint
+        .try_recv()
+        .expect("the switch must reach the service as its own typed command")
+    else {
+        panic!("the switch must use the typed expression-toggle command");
+    };
+    assert_eq!(expected_config_revision, 4);
+    assert!(enabled);
+
+    let mut confirmed = crate::tests::snapshot(5, true, true);
+    confirmed.config_revision = Some(5);
+    confirmed.toggle_repeated_expression = true;
+    reply.respond(Ok(confirmed)).expect("switch reply");
+    visual.run_until_parked();
+    view.update(visual, |view, _| {
+        assert_eq!(
+            view.snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.toggle_repeated_expression),
+            Some(true),
+            "the confirmed snapshot is what the switch then renders"
+        );
+        assert_eq!(
+            view.snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.remember_last_expression),
+            Some(false),
+            "confirming the toggle must not also move the remembered-expression switch"
         );
     });
     assert!(endpoint.try_recv().is_err());

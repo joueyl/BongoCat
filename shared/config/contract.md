@@ -51,6 +51,7 @@ multiplayer
 | `appearance`  | `theme`                               | `system`、`light` 或 `dark`            |
 | `appearance`  | `language`                            | UI locale                              |
 | `overlay`     | `click_through`                       | 指针事件是否穿透                       |
+| `overlay`     | `hold_modifier_to_interact`           | 按住即临时恢复交互的**物理**修饰键：`left_control`、`left_shift`、`left_alt`、`left_meta`、对应 `right_*`，或为 `null`（默认，无键） |
 | `overlay`     | `always_on_top`                       | 是否置顶                               |
 | `overlay`     | `scale_percent`                       | 模型/窗口缩放百分比                    |
 | `overlay`     | `opacity_percent`                     | 窗口不透明度百分比                     |
@@ -58,9 +59,12 @@ multiplayer
 | `overlay`     | `corner_radius_percent`               | 窗口圆角百分比，`[0, 50]`              |
 | `overlay`     | `hide_on_pointer_hover`               | 指针悬停在窗口上时隐藏内容并临时穿透   |
 | `overlay`     | `hide_on_pointer_hover_delay_seconds` | 悬停隐藏前的等待秒数，`[0, 60]`        |
+| `overlay`     | `hide_on_idle`                        | 长时间无操作时淡出内容并临时穿透，默认 `false` |
+| `overlay`     | `hide_on_idle_delay_seconds`          | 无操作隐藏前的等待秒数，`[0, 600]`，默认 `10` |
 | `overlay`     | `keep_inside_screen`                  | 保持在所有屏幕范围内，允许覆盖任务栏等区域 |
 | `input`       | `gamepad.stick_dead_zone`             | 左/右摇杆死区，`[0, 1)`                |
 | `input`       | `gamepad.trigger_dead_zone`           | 扳机死区，`[0, 1)`                     |
+| `input`       | `mouse.force_move`                    | 按相对位移累计指针位置，而不是读绝对光标位置；默认 `false` |
 | `logging`     | `level`                               | 写入阈值：`error`、`warn`、`info`、`debug`、`trace` |
 | `logging`     | `retention_days`                      | 日志保留天数，`[1, 30]`                |
 | `model`       | `selected_model`                      | 当前模型完整身份：`{ id, source }`，或为 `null` |
@@ -72,12 +76,14 @@ multiplayer
 | `model`       | `play_motion_audio`                   | 播放动作音效，默认 `false`             |
 | `model`       | `ignore_keyboard`                     | 模型求值忽略键盘输入                   |
 | `model`       | `ignore_gamepad`                      | 模型求值忽略手柄输入                   |
+| `model`       | `show_all_pressed_keys`               | 每个按住的键各自画一张键位图并按按下顺序叠放，默认 `false` |
 | `model`       | `random_behavior.mode`                | 无人操作时自动播放什么：`off`（默认）、`expressions`、`motions` 或 `motions_and_expressions` |
 | `model`       | `random_behavior.interval_seconds`    | 随机播放间隔秒数，`[1, 3600]`          |
 | `model`       | `gamepad_auto_switch.enabled`         | 手柄连接状态变化时是否自动切换模型，默认 `false` |
 | `model`       | `gamepad_auto_switch.connected_model` | 连接手柄时自动切换的模型，`null` 表示上次使用的手柄模型 |
 | `model`       | `gamepad_auto_switch.disconnected_model` | 断开手柄时自动切换的模型，`null` 表示上次使用的非手柄模型 |
 | `model`       | `remember_last_expression`          | 模型是否回到该模型上次使用的表情，默认 `false` |
+| `model`       | `toggle_repeated_expression`        | 再次触发当前正在显示的同一表情时关闭它，默认 `false` |
 | `model`       | `last_expressions`                  | 每个模型各自记住的表情，模型身份为 `{ id, source }`，默认 `[]` |
 | `model`       | `ignore_pointer`                      | 模型求值忽略指针位置                   |
 | `shortcuts`   | `commands_enabled`                    | 应用快捷键是否进入平台匹配表，默认 `true` |
@@ -95,6 +101,34 @@ multiplayer
 投影：键盘门禁移除键盘键图和手部贡献，手柄门禁移除手柄按钮、手部、摇杆和扳机贡献；原始采集、
 pressed state、释放校正、设备生命周期 Reset、诊断以及独立快捷键注册不受影响。解除门禁后仍由
 同一可靠输入状态继续处理释放，不能通过过滤路径制造卡键。
+
+`model.toggle_repeated_expression` 默认 `false`。表情一旦应用就保持到被替换，因此重复触发同一表情
+一直是空操作；打开后它变成「关掉它」——按当前正在显示的那张脸等于回到模型自己的默认表情，而默认
+表情在切换模型之外没有别的入口。该字段带 `#[serde(default)]`：旧文档没有这个键，读出来是 `false`
+（保持既有行为），而不是被严格 v1 入口拒绝后走「最新有效备份 → 默认配置」恢复流程。
+
+它是独立的开关而不是 `model.remember_last_expression` 的一个取值：两者回答不同问题——一个是模型
+从哪里开始，另一个是重复触发时做什么。关闭动作不写 `model.last_expressions`：记住一个刚被关掉的
+表情会让它在下次启动时以「用户选过」的名义回来。随机播放走 renderer 而不是 command 队列，因此
+永远不参与这个开关。
+
+`model.show_all_pressed_keys` 默认 `false`，即兼容模式：同一只手只画最后按下且仍有效的那个键的
+键位图。打开后每个仍按住的键各自保留一张键位图，按下顺序从旧到新排列，渲染器按该顺序绘制，
+因此最后按下的键显示在最上层。两个输入族共用这一层，所以该开关同样覆盖手柄按钮。
+
+它**只改变画几张图以及叠放顺序**，不改变哪些控件处于按下状态，也不改变爪部反馈：只要有任意一个
+绑定到该手的键仍然按住，对应的 `CatParamLeftHandDown`/`CatParamRightHandDown` 就是 true。判定顺序是
+「按下时间 + 可靠输入队列的 sequence」，两者共同构成一个全序：单调时钟是毫秒精度，快速连击完全可能
+落在同一毫秒内，只有 sequence 能把它们分开。
+
+按键层有固定容量（`bongocat_render::KeyPressSet::CAPACITY`，64）。设备报告的按键数超过该上限时
+丢最早按下的那几个，而不是丢用户此刻正按着的——堆叠的底部是历史，顶层才是用户正在看的。释放仍然只
+由可靠的 KeyUp、状态校正或 Reset 触发，经过的时间不构成释放。
+
+该字段带 `#[serde(default)]`，是 `ModelConfig` 里唯一一个带默认值的字段：v1 解析入口是严格的，
+字段缺失即解析失败，因此没有它的话，任何在该字段加入之前写下的 `config.json` 都会走进
+「最新有效备份 → 默认配置」的恢复流程并丢掉用户设置。缺少该字段的旧文档按兼容模式加载，
+不视为一次新的开启。完整通路见 ADR-0079。
 
 首次启动创建当前 v1 配置时，`overlay.click_through` 默认为 `false`。用户后续通过
 typed settings command 修改该值后，仍按配置 revision 原子提交并在重启时从当前环境恢复。
@@ -122,6 +156,35 @@ runtime 的 overlay visibility。延迟值在首版收窄为 `0..=60` 秒，理�
 `bongocat-config` 中 `OverlayConfig::hide_on_pointer_hover_delay_seconds` 的文档注释。该字段以
 整秒存储，与设置页显示和输入的单位一致；overlay frame loop 仍以毫秒计时，只在
 `OverlaySessionOptions` 边界换算一次。
+
+`overlay.hold_modifier_to_interact` 默认 `null`（没有键）。设置后，按住该**物理**修饰键期间，
+overlay 同时暂停「指针穿透」和「指针悬停隐藏」：窗口不再把指针事件传下去，悬停隐藏状态机按
+「关闭」复位并把 alpha 淡回 `opacity_percent`，因此一只配置成透明的猫仍然能被抓住拖动。松开键后
+两者立即回到配置值；该字段不修改 `overlay.click_through`、`overlay.hide_on_pointer_hover` 或
+它们的延迟，落盘值不变。它不作用于 `overlay.hide_on_idle`。取值是八个 HID 修饰键之一
+（`0xE0..=0xE7`）的 `snake_case` 名称，左右两侧是两个不同的值而不是一个家族；名称之外的字符串由
+严格 v1 解析拒绝，不做「最接近的修饰键」猜测。字段带 `#[serde(default)]`，旧配置文件缺失时按
+`null` 读取。判定依据是 runtime snapshot 的 `input.pressed_modifiers`，即 runtime 自己持有的
+pressed set 在修饰键词汇表上的投影；因此按住状态由 release、reconcile 或 reset 结束，不依赖
+UI 是否在运行。overlay 在每次 frame tick 内重新读取该投影（与悬停隐藏同一时机），读取该字段
+不触发原生窗口重建。
+
+`overlay.hide_on_idle` 默认 `false`，`overlay.hide_on_idle_delay_seconds` 默认 `10` 秒。开启后，
+键盘、鼠标与手柄在延迟时间内都没有新输入事件时，窗口渲染 alpha 在 300ms 内降到 `0`，指针事件
+立即穿透；任何新输入（新的输入事件序号、新的光标采样时间戳或新的手柄轴采样）重新开始计时，alpha
+在 300ms 内恢复。它与悬停隐藏共用同一个呈现通道，两者的 alpha 相乘，指针穿透取两者的或；两者都只
+改变呈现层，窗口、frame loop 与 runtime overlay visibility 不受影响。判定依据是 runtime snapshot
+中的输入计数器，因此输入服务不在 `Running` 状态时该功能关闭，最坏情况是窗口保持可见。两个字段都带
+`#[serde(default)]`，旧配置文件缺失时按默认关闭、延迟 10 秒读取，而不是解析失败。
+
+`input.mouse.force_move` 默认 `false`。开启后，指针位置不再取操作系统的绝对光标位置，而是由设备
+报告的相对位移逐次累加得到：以绝对光标位置为种子，累加每个采样之间的 `dx`/`dy`，并夹在当前显示器
+viewport 内。这解决的是「前台应用捕获指针、把光标钉在一处」的场景——多数全屏游戏会这样做，此时绝对
+位置不再变化，但设备仍在报告每一次移动，因此按绝对位置跟随的猫会停住，而按相对位移累加的猫能继续
+跟随。累加器在第一个采样和 viewport 变化时重新用绝对位置对齐，所以跨显示器不会把位移带进错误的
+坐标系；开启与关闭、以及输入 Reset 都会清空累加值，旧位置不会被再次推进。代价是开启期间由设备以外
+的方式移动的指针（程序化 warp、绝对定位设备）不会被跟随，所以默认关闭。该字段带 `#[serde(default)]`，
+缺失 `input.mouse` 命名空间的旧配置按关闭读取，不进入恢复流程。
 
 `system.show_status_icon` 控制 Windows 托盘或 macOS 菜单栏状态图标，不销毁系统菜单的
 唯一事件 owner。托盘菜单与 overlay 右键菜单是同一 owner 下的两个 popup 根，共享强类型 action
@@ -262,11 +325,15 @@ typed command 与配置校验两处都被拒绝并保留旧值。语义来源与
 `P0 首发`，作为当前 v1 字段进入初始版本。这不引入迁移或兼容逻辑：初始版本仍是全新首版，
 三个字段直接写在当前 v1 schema、默认值、fixture 与实现中。
 
-`appearance.language` 是严格的三值枚举：`system`、`zh-CN` 和 `en-US`，默认 `system`；未知值
-由当前 v1 解析入口直接拒绝，不提供 alias、迁移或 fallback。`system` 在每次启动时读取平台首选
-locale：简体中文 locale 映射为 `zh-CN`，英语和所有其它 locale 都映射为 `en-US`。其中
-`zh-Hant` 与 `TW`/`HK`/`MO` 不属于当前支持的简体中文，按统一规则回退英文。系统解析结果只决定
-实际显示语言，不覆写持久化偏好；显式选择 `zh-CN` 或 `en-US` 时不受系统 locale 影响。
+`appearance.language` 是严格的八值枚举：`system`、`zh-CN`、`zh-TW`、`en-US`、`ar-SA`、`vi-VN`、
+`pt-BR` 和 `ko-KR`，默认 `system`；未知值由当前 v1 解析入口直接拒绝，不提供 alias、迁移或 fallback。
+`system` 在每次启动时读取平台首选 locale，按 primary subtag 归类（RFC 4647 language-subtag
+fallback）：`ar`、`ar-EG`、`ar-SA` 等阿拉伯语 locale 映射为 `ar-SA`，`vi` 与 `vi-VN` 等越南语
+locale 映射为 `vi-VN`，`pt` 与 `pt-PT` 等葡萄牙语 locale 映射为 `pt-BR`，`ko` 等韩语 locale 映射为
+`ko-KR`，英语和所有其它 locale 都映射为 `en-US`。`zh` 是 primary subtag 唯一无法判定的情形：简繁是
+不同书写体系而非地区变体，因此 `zh-Hant` 与 `TW`/`HK`/`MO` 映射为 `zh-TW`，其余 `zh` 标签映射为
+`zh-CN`。系统解析结果只决定实际显示语言，不覆写持久化偏好；显式选择 `zh-CN`、`zh-TW`、`en-US`、
+`ar-SA`、`vi-VN`、`pt-BR` 或 `ko-KR` 时不受系统 locale 影响。
 
 捕获的键盘按键没有超时配置，`input` 因此只有 `gamepad` 一个命名空间。清除一个已按下
 control 的路径是且只有三条：可靠的 KeyUp、平台 pressed-set 校正触发的 reconciliation，

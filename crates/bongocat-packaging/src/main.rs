@@ -73,8 +73,8 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 // Only the macOS disk image has a Finder window to describe, so the encoder is
-// not compiled into the Windows packaging run.
-#[cfg(unix)]
+// not compiled into any other platform's packaging run.
+#[cfg(target_os = "macos")]
 mod finder_store;
 
 use std::{
@@ -110,6 +110,12 @@ const RESOURCE_DIRECTORY: &str = "resources";
 const MACOS_ICON: &str = "icons/logo-macos.icns";
 /// Repository-relative directory holding the three preset models.
 const MODEL_DIRECTORY: &str = "models";
+/// Resource bundle the macOS guided permission flow resolves its strings from.
+///
+/// `swift-rs` builds it inside `permission-flow`'s own `OUT_DIR` and never publishes it, while the
+/// accessor SwiftPM generates looks for it in `Contents/Resources` among other places and aborts
+/// the process when it is absent (ADR-0078).
+const SWIFT_RESOURCE_BUNDLE: &str = "PermissionFlow_PermissionFlow.bundle";
 /// Repository-relative directory holding the macOS `Info.plist` overlay.
 const MACOS_INFO_PLIST: &str = "macos/Info.plist";
 /// Repository-relative build provenance generator.
@@ -122,16 +128,16 @@ const OUTPUT_DIRECTORY: &str = "target/package";
 const STAGING_DIRECTORY: &str = "provenance";
 /// Staging directory for the disk image contents, relative to the output directory.
 ///
-/// Only the macOS disk image builder reads it, so it is Unix-only: a Windows
-/// build would otherwise carry a constant no code path can reach, which the
-/// workspace's `-D warnings` gate rejects.
-#[cfg(unix)]
+/// Only the macOS disk image builder reads it, so it is macOS-only: a build for
+/// any other platform would otherwise carry a constant no code path can reach,
+/// which the workspace's `-D warnings` gate rejects.
+#[cfg(target_os = "macos")]
 const DISK_IMAGE_STAGING_DIRECTORY: &str = "dmg-stage";
 /// The drop link the installer window offers as the install target.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 const APPLICATIONS_LINK: &str = "Applications";
 /// The icon file Finder reads a volume's own icon from.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 const VOLUME_ICON_FILE: &str = ".VolumeIcon.icns";
 /// The repair command the installer window offers next to the drop link.
 ///
@@ -144,10 +150,10 @@ const VOLUME_ICON_FILE: &str = ".VolumeIcon.icns";
 /// after the product: macOS tells them the app is damaged, and this is the item
 /// that answers that. The `App` is what keeps it apart from disk damage, which
 /// matters for an item that lives on a disk image.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 const REPAIR_COMMAND: &str = "Fix Damaged App";
 /// Where a drag-to-install product lands, which is what the repair repairs.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 const APPLICATIONS_DIRECTORY: &str = "/Applications";
 /// Staging directory for the cleaned preset models, relative to the output directory.
 ///
@@ -668,12 +674,19 @@ fn package(options: Options) -> Result<Vec<PathBuf>> {
         environment_features(&options.environment),
     )?;
     let models = stage_model_resources(&workspace)?;
+    // Resolved after `build_application`, which is what produces the Swift bundle.
+    let swift_bundle = if target.is_apple() {
+        Some(swift_resource_bundle(&workspace, target)?)
+    } else {
+        None
+    };
 
     let config = packaging_config(
         &workspace,
         target,
         &provenance,
         &models,
+        swift_bundle.as_deref(),
         &packager_formats(&requested),
     )?;
     let packages = cargo_packager::package(&config)?;
@@ -847,6 +860,7 @@ fn packaging_config(
     target: ReleaseTarget,
     provenance: &Path,
     models: &Path,
+    swift_bundle: Option<&Path>,
     formats: &[PackageFormat],
 ) -> Result<Config> {
     let mut config = Config::default();
@@ -884,7 +898,7 @@ fn packaging_config(
     config.out_dir = workspace.join(OUTPUT_DIRECTORY);
     config.target_triple = Some(target.triple().to_owned());
     config.formats = Some(formats.to_vec());
-    config.resources = Some(resources(target, models, provenance));
+    config.resources = Some(resources(target, models, provenance, swift_bundle));
 
     if target.is_apple() {
         let mut macos = MacOsConfig::new();
@@ -916,13 +930,18 @@ fn packaging_config(
 ///
 /// `models` is the staged copy from [`stage_model_resources`], not the working
 /// tree's `resources/models`.
-fn resources(target: ReleaseTarget, models: &Path, provenance: &Path) -> Vec<Resource> {
+fn resources(
+    target: ReleaseTarget,
+    models: &Path,
+    provenance: &Path,
+    swift_bundle: Option<&Path>,
+) -> Vec<Resource> {
     let prefix = if target.is_apple() {
         String::new()
     } else {
         format!("{RESOURCE_DIRECTORY}/")
     };
-    vec![
+    let mut resources = vec![
         Resource::Mapped {
             src: models.display().to_string(),
             target: PathBuf::from(format!("{prefix}{MODEL_DIRECTORY}")),
@@ -931,7 +950,88 @@ fn resources(target: ReleaseTarget, models: &Path, provenance: &Path) -> Vec<Res
             src: provenance.display().to_string(),
             target: PathBuf::from(format!("{prefix}{PROVENANCE_FILE}")),
         },
-    ]
+    ];
+    if let Some(swift_bundle) = swift_bundle {
+        resources.push(Resource::Mapped {
+            src: swift_bundle.display().to_string(),
+            target: PathBuf::from(SWIFT_RESOURCE_BUNDLE),
+        });
+    }
+    resources
+}
+
+/// Locates the Swift resource bundle `swift-rs` built for the guided permission flow.
+///
+/// The bundle stays in `permission-flow`'s own `OUT_DIR`, and SwiftPM's generated accessor aborts
+/// the process when it cannot find it, so the package has to carry a copy. The only place to read
+/// it from is the Cargo profile directory of the target being packaged, and the build script's own
+/// `build` entry has no Swift output at all, so a directory that is missing skips to the next one
+/// rather than ending the search.
+fn swift_resource_bundle(workspace: &Path, target: ReleaseTarget) -> Result<PathBuf> {
+    let build = workspace
+        .join("target")
+        .join(target.triple())
+        .join("release")
+        .join("build");
+    let Ok(entries) = fs::read_dir(&build) else {
+        return failure(format!(
+            "could not read {} to locate {SWIFT_RESOURCE_BUNDLE}",
+            build.display()
+        ));
+    };
+    for entry in entries.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("permission-flow-")
+        {
+            continue;
+        }
+        if let Some(bundle) =
+            find_swift_resource_bundle(&entry.path().join("out/swift-rs/PermissionFlowShimFFI"))
+        {
+            return Ok(bundle);
+        }
+    }
+    failure(format!(
+        "missing {SWIFT_RESOURCE_BUNDLE} under {}: the macOS guided permission flow cannot \
+         resolve its strings without it",
+        build.display()
+    ))
+}
+
+/// Finds the resource bundle below the build path `swift-rs` gave to SwiftPM.
+///
+/// That layout has already changed once, and this repository is built with more than one toolchain:
+/// before Xcode 27 SwiftPM wrote products to `<arch>-apple-macosx/<Configuration>` under the build
+/// path, and since then to `[out/]Products/<Configuration>`, and Xcode 27 keeps the older directory
+/// around as well. A search pinned to the shape the local machine happens to produce passes here
+/// and fails in CI, so the bundle is looked up by walking the package's own build path. The walk is
+/// depth-bounded because the deepest layout in use puts the bundle three levels down, and a
+/// packaging step has no reason to crawl an unbounded tree.
+fn find_swift_resource_bundle(build_path: &Path) -> Option<PathBuf> {
+    const MAX_DEPTH: usize = 3;
+
+    let mut pending = vec![(build_path.to_path_buf(), 0usize)];
+    while let Some((directory, depth)) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path
+                .file_name()
+                .is_some_and(|name| name == SWIFT_RESOURCE_BUNDLE)
+                && path.is_dir()
+            {
+                return Some(path);
+            }
+            if depth < MAX_DEPTH && path.is_dir() {
+                pending.push((path, depth + 1));
+            }
+        }
+    }
+    None
 }
 
 /// The staging root for packaged resources, under the output directory.
@@ -1919,7 +2019,7 @@ fn run_command(program: &str, command: &mut Command) -> Result<()> {
 }
 
 /// Builds the macOS installer disk image from a finished `.app` bundle.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn build_disk_image(
     workspace: &Path,
     target: ReleaseTarget,
@@ -2053,7 +2153,7 @@ fn build_disk_image(
 /// The script also closes the Terminal window it ran in, because the window is
 /// the interface here and a prompt that promises to close it has to keep that
 /// promise; see `finish` in the script for the two conditions that make it safe.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn repair_command(app_name: &str) -> String {
     format!(
         r##"#!/bin/bash
@@ -2162,13 +2262,13 @@ fn make_executable(path: &Path) -> Result<()> {
 /// mounted on the machine that ran it, and a build that fails after detaching
 /// must not detach something it no longer owns, so the guard tracks whether the
 /// volume is still attached.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 struct MountedImage {
     mount_point: PathBuf,
     attached: bool,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 impl MountedImage {
     /// Attaches `image` to `mount_point`, which has to exist and be empty.
     fn attach(image: &Path, mount_point: &Path) -> Result<Self> {
@@ -2208,7 +2308,7 @@ impl MountedImage {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 impl Drop for MountedImage {
     fn drop(&mut self) {
         if self.attached {
@@ -2223,7 +2323,7 @@ impl Drop for MountedImage {
 
 /// Gives a mounted volume the product icon, so Finder titles the installer
 /// window with it instead of a generic disk image icon.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn set_volume_icon(mount: &Path) -> Result<()> {
     // `SetFile` ships with macOS in `/usr/bin`; it is what `create-dmg` uses for
     // this too, and nothing in the Command Line Tools is needed.
@@ -2234,14 +2334,14 @@ fn set_volume_icon(mount: &Path) -> Result<()> {
 
 /// Marks a file as an icon, so Finder reads it as the volume's icon rather than
 /// as an unknown file with an `.icns` name.
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 fn mark_icon_file(icon: &Path) -> Result<()> {
     let mut set = Command::new("SetFile");
     set.args(["-c", "icnC"]).arg(icon);
     run_command("SetFile", &mut set)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "macos"))]
 fn build_disk_image(
     _workspace: &Path,
     _target: ReleaseTarget,
@@ -2283,9 +2383,13 @@ fn verify_app_bundle(target: ReleaseTarget, bundle: &Path) -> Result<()> {
         contents.join("Info.plist"),
         contents.join("MacOS").join(APPLICATION_BINARY),
         contents.join("Resources").join(PROVENANCE_FILE),
+        // The guided permission flow aborts the process when SwiftPM's accessor cannot find this
+        // bundle, so a package that lost it would fail in a user's hands rather than here.
+        contents.join("Resources").join(SWIFT_RESOURCE_BUNDLE),
     ];
     for path in expected {
-        if !path.is_file() {
+        // The Swift resource bundle is a directory; the rest are files.
+        if !path.exists() {
             return failure(format!(
                 "{} is missing inside {}",
                 path.strip_prefix(bundle)
@@ -2329,7 +2433,7 @@ mod tests {
     /// format string above would otherwise ship a file that fails only on the
     /// reader's machine, after they have already dragged the app across.
     #[test]
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn the_shipped_repair_command_is_valid_shell() {
         let script = super::repair_command("BongoCat.app");
         let path = std::env::temp_dir().join("bongocat-repair-command-check.sh");
@@ -2455,6 +2559,68 @@ mod tests {
             !name.contains("-setup"),
             "the published installer must not keep the packaging suffix: {name}"
         );
+    }
+
+    /// Packaging fails outright when the Swift resource bundle is missing, so the
+    /// search has to cover every layout SwiftPM has used for a `--build-path`
+    /// build. This repository is built with more than one Xcode, and a search
+    /// pinned to the shape the local machine produces passes here while failing
+    /// in CI, which is exactly how the `out/Products`-only search got in.
+    #[test]
+    fn the_swift_resource_bundle_is_found_in_every_products_layout() {
+        for products in [
+            "out/Products/Release",
+            "Products/Release",
+            "release",
+            "arm64-apple-macosx/release",
+        ] {
+            let root = std::env::temp_dir().join("bongocat-packaging-swift-bundle");
+            let _ = std::fs::remove_dir_all(&root);
+            let package = root
+                .join("target")
+                .join(ReleaseTarget::MacosAarch64.triple())
+                .join("release")
+                .join("build")
+                .join("permission-flow-0123456789abcdef/out/swift-rs/PermissionFlowShimFFI");
+            let expected = package.join(products).join(super::SWIFT_RESOURCE_BUNDLE);
+            std::fs::create_dir_all(&expected).expect("products directory");
+
+            assert_eq!(
+                super::swift_resource_bundle(&root, ReleaseTarget::MacosAarch64)
+                    .expect("the bundle is present"),
+                expected,
+                "the {products} layout must be searched"
+            );
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    /// A build whose Swift package produced no bundle has to fail with the reason
+    /// rather than ship an app whose panel aborts the process on first use.
+    #[test]
+    fn a_build_without_the_swift_resource_bundle_fails_with_the_reason() {
+        let root = std::env::temp_dir().join("bongocat-packaging-swift-bundle-missing");
+        let _ = std::fs::remove_dir_all(&root);
+        let package = root
+            .join("target")
+            .join(ReleaseTarget::MacosAarch64.triple())
+            .join("release")
+            .join("build")
+            .join("permission-flow-0123456789abcdef/out/swift-rs/PermissionFlowShimFFI");
+        // The build script's own `build` entry exists and carries no Swift output.
+        std::fs::create_dir_all(&package).expect("build directory");
+
+        let error = super::swift_resource_bundle(&root, ReleaseTarget::MacosAarch64)
+            .expect_err("a build without the bundle must not package")
+            .to_string();
+
+        assert!(
+            error.contains(super::SWIFT_RESOURCE_BUNDLE),
+            "the failure has to name the bundle it could not find: {error}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
